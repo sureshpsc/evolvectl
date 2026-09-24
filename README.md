@@ -12,8 +12,8 @@ evolvectl init
 
 | Page | What you learn |
 | --- | --- |
-| Start | What an upgrade is, and how that job differs from Copybara |
-| Copybara | How Copybara and any tool in that role plug into a campaign |
+| Start | What an upgrade is, and how it differs from tools that copy library code in |
+| Copybara | How a sync tool such as Copybara plugs into a campaign |
 | Languages | Go, Python, Maven, Node, and Bazel, and what each one can repair |
 | How it works | The ten stages, dry-run, offline mode, and reports |
 | Commands | Every command, with the flags that matter and a copyable example |
@@ -23,43 +23,54 @@ evolvectl init
 
 Pass `--no-browser` to write the files and leave the browser alone. After the config already exists, `evolvectl help` rewrites the guide and opens the command page. `evolvectl docs languages --format html` opens one topic. `evolvectl --help` stays the short terminal summary.
 
-## Copybara and evolvectl: who does what
+## Where evolvectl fits
 
 A dependency upgrade is two jobs.
 
-1. **Bring the new version of the library in.** In a repository that keeps a copy of third-party code, someone has to copy the new source into `third_party/`. That is **Copybara's** job: it moves files from one repository to another and applies the path and text changes written in `copy.bara.sky`.
+1. **Bring the new version of the library in.** How depends on the repository. A package manager updates the manifest (`go get`, `npm install`, `pip`). A repository that keeps its own copy of third-party code uses a sync tool to copy the new source into `third_party/`, for example Copybara, git subtree, git submodule, vendir, or `evolvectl vendor`.
 2. **Make your code work with it.** Your code still calls the old API. Imports, signatures, and callbacks have to change, and the tests have to prove nothing broke. That is **evolvectl's** job. It edits your checkout, runs your tests before and after, and writes a report.
 
-Copybara does not know what your code calls. Evolvectl does not copy code between repositories. They sit next to each other:
+An import tool moves the library's files and does not know what your code calls. Evolvectl changes the code that calls the library, whichever tool brought it in.
 
 ```mermaid
 flowchart LR
     UP["Upstream library<br/>github.com/googleapis/gax-go<br/>tag v2.0.2"]
 
-    subgraph CB["Copybara: moves the library's code"]
-        SKY["copy.bara.sky<br/>workflow and ref"] --> MIG["copybara migrate"]
+    subgraph IMP["Step 1: bring the library in (any one)"]
+        PM["Package manager<br/>go get, npm, pip"]
+        SYNC["Sync tool<br/>Copybara, git subtree, vendir"]
+        VEN["evolvectl vendor"]
     end
 
     subgraph REPO["Your repository"]
-        TP["third_party/gax<br/>the library copy"]
-        APP["Your services<br/>code that calls gax"]
+        LIB["The library<br/>go.mod entry or third_party/ copy"]
+        APP["Your services<br/>code that calls the library"]
     end
 
-    subgraph EV["evolvectl: fixes the code that uses it"]
+    subgraph EV["Step 2: evolvectl fixes the code that uses it"]
         direction TB
         E1["scan, outdated --online<br/>what is old, what is vulnerable"] --> E2["impact<br/>which files and lines break"]
-        E2 --> E3["upgrade<br/>go.mod, imports, API recipes"]
-        E3 --> E4["go test before and after<br/>coverage before and after"]
+        E2 --> E3["upgrade<br/>manifests, imports, API recipes"]
+        E3 --> E4["tests before and after<br/>coverage before and after"]
         E4 --> E5["report.html, branch, pull request"]
     end
 
-    UP --> MIG --> TP
-    TP -. "used by" .-> APP
+    UP --> PM --> LIB
+    UP --> SYNC --> LIB
+    UP --> VEN --> LIB
+    LIB -. "used by" .-> APP
     APP --> E1
     E3 -- "edits" --> APP
-    PIN["evolvectl copybara pin<br/>sets the ref"] -. "optional" .-> SKY
-    VEN["evolvectl vendor<br/>for repos wired by go.mod"] -. "instead of Copybara" .-> TP
 ```
+
+| | Import tool | Evolvectl |
+| --- | --- | --- |
+| Where the work happens | Between an upstream and your repository | Inside the checkout you name |
+| Unit of work | A library or folder at a ref | One dependency moved to one target version |
+| What it changes | The library's files | Your manifests and the code that calls the library |
+| What proves the result | The copied files match the ref | Your tests and coverage, before the edit and after it |
+
+Evolvectl does not run your sync tool. Run it first, then run evolvectl on the result; any tool works this way. Copybara is the one sync tool with extra built-in help today: `copybara explain` traces a file through a workflow, and `copybara pin` updates the pinned ref (see [copybara](#copybara)). Go repositories that do not use a sync tool can use `evolvectl vendor` for the import step.
 
 ### Example: gax-go from v0 to v2.0.2
 
@@ -70,7 +81,7 @@ The task: services use `github.com/googleapis/gax-go` at `v0.0.0-20161107002406-
 | Find every place that uses gax | grep across the repository, one module at a time | `evolvectl scan` walks every module in the repository |
 | Know which version to move to | read release notes, notice that `v2.0.2` without `/v2` is the old `+incompatible` copy | `evolvectl outdated --online` shows `gax-go/v2@v2.21.0` exists; `plan` warns about `+incompatible` |
 | Know what will break before touching code | read two versions of the source and compare | `evolvectl impact` lists removed and changed API and each file and line that uses it |
-| Bring the new library source in (monorepo with `third_party/`) | edit `copy.bara.sky`, run the import | Copybara: `copybara migrate`. `evolvectl copybara pin --ref v2.0.2` edits the ref for you and shows the diff |
+| Bring the new library source in (repository with `third_party/`) | update the sync tool's pinned ref, run the import | your sync tool, for example `copybara migrate` or `git subtree pull`. For Copybara, `evolvectl copybara pin --ref v2.0.2` edits the ref and shows the diff |
 | Bring it in (repository with `go.mod`) | `go get`, fix go.sum, or copy into `third_party/` and add a `replace` | `evolvectl upgrade` or `evolvectl vendor` |
 | Rewrite imports to `/v2` | edit each file | `evolvectl upgrade --to-module github.com/googleapis/gax-go/v2` |
 | Fix each `gax.Invoke` closure | edit each call | the bundled `go.gax.invoke-callsettings` and `go.gax.apicall-callsettings` recipes |
@@ -94,9 +105,9 @@ What that did on a real module using the 2016 gax-go: the import became `gax "gi
 
 Where each tool stops:
 
-- Copybara does not change code outside the files it copies, and does not run your tests.
-- Evolvectl does not run `copybara migrate`, because that can create a change in another repository. You run it.
-- Evolvectl reads `go.mod`. A monorepo built only from BUILD files, with no `go.mod`, needs Copybara for the import and its own build tooling for the callers.
+- An import tool changes only the files it copies, and does not run your tests.
+- Evolvectl does not run the import tool for you. Some, such as Copybara, can create a change in another repository, so that stays your command.
+- Evolvectl reads `go.mod`. A monorepo built only from BUILD files, with no `go.mod`, needs its own import tool for the library and its own build tooling for the callers.
 - `impact` reads declarations and is not type-checked. Package names in code are not renamed during a module move.
 
 ### Does evolvectl look at the whole repository?
@@ -107,30 +118,7 @@ It skips directories that hold generated or downloaded code: `.git`, `node_modul
 
 Edits stay inside the plan: the manifests that declare the dependency, and the source files that import it. When no file imports it by name, the plan falls back to that project's source files in the same language, and recipes still change only code that matches. `plan` prints the count before anything is written, and `plan --format json` lists every file.
 
-## Two different jobs
-
-Copybara copies and transforms files from an origin repository into a destination repository. The workflow lives in `copy.bara.sky`. When you run `copybara migrate`, that command can open a review on a remote destination.
-
-Evolvectl stays in the checkout you name. You give it one dependency and one target version. It edits that checkout so the code matches the new version, then records the diff and which tests moved.
-
-| Question | Copybara | Evolvectl |
-| --- | --- | --- |
-| Where does the work happen? | Between an origin repo and a destination repo | Inside the workspace you pass to the command |
-| What is the unit of work? | A workflow in `copy.bara.sky` | One dependency moved to one target version |
-| What changes the bytes? | Starlark transforms, when you run the Copybara binary | Manifest edits and YAML recipes |
-| What proves the result? | The destination review you asked Copybara to create | The same tests and coverage, before the edit and after it |
-
-A repository can use both. `evolvectl copybara explain` reads `copy.bara.sky` as text: it substitutes top-level `name = "literal"` assignments, traces literal globs and `core.move` / `core.replace`, and leaves every other call unresolved. It executes no Starlark. If the `copybara` binary is missing, explain still prints that static view.
-
-`evolvectl upgrade` leaves `copybara migrate` for you to run yourself, because that command can create a review on a remote destination. Selecting `--provider copybara` requires the binary on `PATH`. Preflight stops with `COPYBARA_NOT_FOUND` when it is missing, and the next step is to install Copybara or `evolvectl session export git`.
-
-```bash
-evolvectl copybara explain --config examples/mixed-monorepo/copy.bara.sky --workflow export-go-lib --file go/client/client.go
-```
-
-In that fixture, `go/client/client.go` is included, moved to `third_party/go/client/client.go`, and left alone by the BUILD-only `core.replace`. `go/vendor/x.go` is excluded. Credential-shaped URLs are redacted.
-
-## How a tool like Copybara fits
+## Providers and adapters
 
 The campaign stages stay the same for every workspace. Three slots change:
 
@@ -144,7 +132,7 @@ Built-in providers:
 | --- | --- |
 | `filesystem` | Read the directory. Always available. |
 | `git` | Read `git status` before an edit. A dirty worktree blocks `upgrade` until you commit, stash, or pass `--allow-dirty`. Dry-run allows a dirty tree. |
-| `copybara` | Require the Copybara binary, and explain `copy.bara.sky`. Migration stays a Copybara command. |
+| `copybara` | Require the Copybara binary. Migration stays a Copybara command. |
 | `command` | Run the validator argv you configured. |
 
 Precedence on one command is `--provider`, then `EVOLVECTL_WORKSPACE_PROVIDER`, then `workspace.type` in `.evolvectl.yaml`, then auto. Auto picks git when the workspace has a `.git` directory, and filesystem otherwise.
@@ -571,7 +559,7 @@ evolvectl ui stop
 
 ### copybara
 
-Inspect `copy.bara.sky` without migrating. See [Two different jobs](#two-different-jobs).
+Built-in support for one sync tool, Copybara. These commands read and edit `copy.bara.sky`; none of them runs `copybara migrate`. See [Where evolvectl fits](#where-evolvectl-fits).
 
 ```bash
 evolvectl copybara list --config examples/mixed-monorepo/copy.bara.sky
@@ -579,6 +567,10 @@ evolvectl copybara explain --config examples/mixed-monorepo/copy.bara.sky --work
 ```
 
 `--config` defaults to `copy.bara.sky`. `--workflow` selects a workflow. `--file` traces one path through it.
+
+`explain` reads the file as text. It substitutes top-level `name = "literal"` assignments, traces literal globs and `core.move` / `core.replace`, and leaves every other call unresolved. It executes no Starlark and works without the Copybara binary. In the example above, `go/client/client.go` is included, moved to `third_party/go/client/client.go`, and left alone by the BUILD-only `core.replace`; `go/vendor/x.go` is excluded. Credential-shaped URLs are redacted.
+
+Selecting `--provider copybara` requires the binary on `PATH`. Preflight stops with `COPYBARA_NOT_FOUND` when it is missing.
 
 `copybara pin` changes the origin `ref` of one workflow and prints the diff. The rest of the file is kept byte-for-byte. The origin can be inline or a top-level name, and the ref can be a string or a top-level name bound to a string; each is changed where it is defined. A missing ref is added. A computed ref is refused. Copybara is not run.
 
