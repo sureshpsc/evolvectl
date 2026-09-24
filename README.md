@@ -4,14 +4,24 @@ Upgrade codebases, not just dependency files.
 
 Evolvectl discovers a repository, plans a dependency upgrade, applies deterministic recipes, runs validation, and writes one report that the terminal, JSON, Markdown, and offline HTML all render. Copybara is a provider you can inspect. It is not the campaign engine. AI is off unless you enable it, and `--no-ai` keeps the deterministic path.
 
+## Install
+
+No package release is required. With Go installed:
+
+```bash
+go install github.com/sureshpsc/evolvectl/cmd/evolvectl@latest
+evolvectl version
+```
+
+That places `evolvectl` in `$(go env GOPATH)/bin`. From a local checkout, `go install ./cmd/evolvectl` does the same. A GitHub release is only for downloading a binary on a machine that does not have Go.
+
 ## Quickstart
 
 ```bash
-go build -o evolvectl ./cmd/evolvectl
-./evolvectl init
-./evolvectl scan --workspace examples/mixed-monorepo
-./evolvectl plan google.golang.org/grpc --to v1.75.0 --workspace examples/git-go-grpc
-./evolvectl upgrade google.golang.org/grpc --to v1.75.0 --workspace examples/git-go-grpc
+evolvectl init
+evolvectl scan --workspace examples/mixed-monorepo
+evolvectl plan google.golang.org/grpc --to v1.75.0 --workspace examples/git-go-grpc
+evolvectl upgrade google.golang.org/grpc --to v1.75.0 --no-ai --workspace examples/git-go-grpc
 ```
 
 `upgrade` writes the workspace. `--dry-run` applies the same steps in a temporary copy and leaves the original source unchanged.
