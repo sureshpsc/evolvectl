@@ -1,0 +1,6 @@
+[project]
+name = "demo"
+version = "0.1.0"
+dependencies = [
+  "pydantic==1.10.2",
+]

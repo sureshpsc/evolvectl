@@ -1,0 +1,13 @@
+/bin/
+/dist/
+/coverage.out
+*.exe
+*.test
+.evolvectl/state.db
+.evolvectl/cache/
+.evolvectl/logs/
+.evolvectl/reports/
+.evolvectl/patches/
+.evolvectl/snapshots/
+.evolvectl/runs/
+.evolvectl/ui.addr

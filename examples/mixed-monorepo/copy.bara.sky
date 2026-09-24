@@ -1,0 +1,14 @@
+source_url = "https://github.com/example/source.git"
+
+core.workflow(
+    name = "export-go-lib",
+    origin = git.origin(url = source_url, ref = "main"),
+    destination = git.destination(url = "https://user:ghp_abcdefghijklmnopqrst@github.com/example/private.git", fetch = "main", push = "main"),
+    origin_files = glob(["go/**", "LICENSE"], exclude = ["go/vendor/**"]),
+    destination_files = glob(["third_party/go/**", "LICENSE"]),
+    authoring = authoring.pass_thru("Automation <automation@example.com>"),
+    transformations = [
+        core.move("go", "third_party/go"),
+        core.replace(before = "//go/old", after = "//third_party/go/new", paths = glob(["**/BUILD", "**/BUILD.bazel"])),
+    ],
+)

@@ -1,0 +1,29 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: go.import.path-replace
+  title: Replace a Go import path
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - go
+    - import
+spec:
+  language: go
+  dependency:
+    ecosystem: gomod
+    name: example.com/oldmod
+    from: ">=1.0.0 <1.75.0"
+    to: ">=1.75.0"
+  match:
+    type: import
+    package: example.com/oldmod
+  transform:
+    type: import_path_replace
+    target_import: example.com/newmod
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: true
+  validate:
+    - gofmt

@@ -1,0 +1,16 @@
+apiVersion: evolvectl.io/v1alpha1
+kind: CommandAdapter
+metadata:
+  name: maven
+spec:
+  capabilities:
+    - test.run
+  commands:
+    test:
+      argv: ["go", "run", "./tools"]
+      timeout: 2m
+      required: true
+  diagnostics:
+    patterns:
+      - name: compiler-error
+        regex: '^(?P<file>[^:]+):(?P<line>\d+):(?P<column>\d+): (?P<message>.+)$'

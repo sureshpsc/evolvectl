@@ -1,0 +1,29 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: python.keyword.orm-mode
+  title: Rename orm_mode to from_attributes
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - python
+    - pydantic
+spec:
+  language: python
+  dependency:
+    ecosystem: python
+    name: pydantic
+    from: ">=1.0.0 <2.0.0"
+    to: ">=2.0.0"
+  match:
+    type: keyword
+    keyword: orm_mode
+  transform:
+    type: python_keyword_rename
+    target_keyword: from_attributes
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: false
+  validate:
+    - python syntax

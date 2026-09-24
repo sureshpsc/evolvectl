@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evolvectl.dev/schemas/config.schema.json",
+  "title": "EvolvectlConfig",
+  "type": "object",
+  "properties": {
+    "version": { "const": 1 },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "type": { "enum": ["auto", "git", "copybara", "filesystem"] }
+      }
+    }
+  },
+  "required": ["version"]
+}

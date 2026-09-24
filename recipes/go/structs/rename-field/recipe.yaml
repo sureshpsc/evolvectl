@@ -1,0 +1,28 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: go.struct.field-rename
+  title: Rename a struct field
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - go
+spec:
+  language: go
+  dependency:
+    ecosystem: gomod
+    name: example.com/lib
+    from: ">=1.0.0 <1.75.0"
+    to: ">=1.75.0"
+  match:
+    type: struct_field
+    field: OldField
+  transform:
+    type: struct_field_rename
+    target_field: NewField
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: false
+  validate:
+    - gofmt

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evolvectl.dev/schemas/recipe.schema.json",
+  "title": "MigrationRecipe",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "kind": { "const": "MigrationRecipe" },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "transform": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "enum": [
+                "import_path_replace",
+                "call_rename",
+                "call_argument_remove",
+                "call_argument_insert",
+                "call_rewrite",
+                "struct_field_rename",
+                "python_import_rename",
+                "python_decorator_rename",
+                "python_symbol_rename",
+                "python_method_rename",
+                "python_keyword_rename"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

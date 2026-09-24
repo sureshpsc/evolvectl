@@ -1,0 +1,29 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: go.call.rename
+  title: Rename a Go function call
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - go
+spec:
+  language: go
+  dependency:
+    ecosystem: gomod
+    name: example.com/lib
+    from: ">=1.0.0 <1.75.0"
+    to: ">=1.75.0"
+  match:
+    type: call
+    package: example.com/lib
+    symbol: Old
+  transform:
+    type: call_rename
+    target_symbol: New
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: true
+  validate:
+    - gofmt

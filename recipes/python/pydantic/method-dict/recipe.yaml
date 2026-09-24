@@ -1,0 +1,29 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: python.method.dict
+  title: Rename dict() to model_dump()
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - python
+    - pydantic
+spec:
+  language: python
+  dependency:
+    ecosystem: python
+    name: pydantic
+    from: ">=1.0.0 <2.0.0"
+    to: ">=2.0.0"
+  match:
+    type: method
+    symbol: dict
+  transform:
+    type: python_method_rename
+    target_symbol: model_dump
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: false
+  validate:
+    - python syntax

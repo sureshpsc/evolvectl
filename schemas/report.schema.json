@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evolvectl.dev/schemas/report.schema.json",
+  "title": "RunReport",
+  "type": "object",
+  "required": ["schema_version", "id", "outcome"],
+  "properties": {
+    "schema_version": { "const": "evolvectl.run/v1" },
+    "outcome": {
+      "enum": ["succeeded", "succeeded_with_review", "failed", "blocked", "cancelled", "partial"]
+    }
+  }
+}

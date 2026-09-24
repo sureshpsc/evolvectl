@@ -1,0 +1,29 @@
+apiVersion: evolvectl.dev/v1alpha1
+kind: MigrationRecipe
+metadata:
+  id: python.import.path-rename
+  title: Move pydantic.v1 imports onto pydantic
+  owners:
+    - evolvectl-maintainers
+  tags:
+    - python
+    - pydantic
+spec:
+  language: python
+  dependency:
+    ecosystem: python
+    name: pydantic
+    from: ">=1.0.0 <2.0.0"
+    to: ">=2.0.0"
+  match:
+    type: import
+    package: pydantic.v1
+  transform:
+    type: python_import_rename
+    target_import: pydantic
+  safety:
+    confidence: high
+    generated_files: deny
+    require_type_info: false
+  validate:
+    - python syntax
