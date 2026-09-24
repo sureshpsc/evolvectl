@@ -51,6 +51,11 @@ func Markdown(r *domain.RunReport) string {
 		b.WriteString(qualityText(r.Quality))
 		b.WriteString("\n")
 	}
+	if r.Impact != nil {
+		b.WriteString("\n## API impact\n\n```\n")
+		b.WriteString(ImpactText(r.Impact))
+		b.WriteString("```\n")
+	}
 	b.WriteString("\n## Validations\n\n")
 	for _, v := range r.Validations {
 		fmt.Fprintf(&b, "- %s: %s required=%v", v.Validator, v.Status, v.Required)
@@ -92,12 +97,130 @@ func TextSummary(r *domain.RunReport) string {
 	if r.Quality != nil {
 		b.WriteString(qualityText(r.Quality))
 	}
+	if r.Impact != nil && r.Impact.Status == "recorded" {
+		fmt.Fprintf(&b, "API impact           %d removed, %d changed; %d call site(s) in %d file(s)\n", r.Impact.Removed, r.Impact.Changed, len(r.Impact.Sites), r.Impact.FilesAffected)
+	}
 	b.WriteString("Validation\n")
 	for _, v := range r.Validations {
 		fmt.Fprintf(&b, "  %-22s %s\n", v.Validator, v.Status)
 	}
+	if len(r.ManualReview) > 0 {
+		b.WriteString("Review\n")
+		for _, item := range r.ManualReview {
+			fmt.Fprintf(&b, "  %s\n", redact.Text(item))
+		}
+	}
+	if r.SCM != nil {
+		b.WriteString(scmText(r.SCM))
+	}
 	if r.NextStep != "" {
 		fmt.Fprintf(&b, "Next                 %s\n", r.NextStep)
+	}
+	return b.String()
+}
+
+// PRBody is a short Markdown summary for a commit body or pull request. The full report stays local.
+func PRBody(r *domain.RunReport) string {
+	var b strings.Builder
+	t := r.Target
+	switch {
+	case t.VendorDir != "":
+		fmt.Fprintf(&b, "Vendors `%s` %s into `%s` and points `go.mod` at it with a replace.\n\n", t.Module(), t.To, t.VendorDir)
+	case t.ToModule != "" && t.ToModule != t.Name:
+		fmt.Fprintf(&b, "Moves `%s` to `%s` %s and rewrites the imports.\n\n", t.Name, t.ToModule, t.To)
+	default:
+		fmt.Fprintf(&b, "Upgrades `%s` to %s.\n\n", t.Name, t.To)
+	}
+	fmt.Fprintf(&b, "- Outcome: `%s` — %s\n", r.Outcome, redact.Text(r.OutcomeReason))
+	if r.Plan != nil && len(r.Plan.CurrentVersions) > 0 {
+		fmt.Fprintf(&b, "- From: %s\n", strings.Join(r.Plan.CurrentVersions, ", "))
+	}
+	fmt.Fprintf(&b, "- Files changed: %d\n", countFiles(r.Changes))
+	if q := r.Quality; q != nil {
+		fmt.Fprintf(&b, "- Tests before: %d passed, %d failed. After: %d passed, %d failed. Newly failed: %d\n", q.BaselinePassed, q.BaselineFailed, q.AfterPassed, q.AfterFailed, len(q.NewlyFailed))
+		fmt.Fprintf(&b, "- Coverage before: %s. After: %s\n", coverageSummary(q.Before), coverageSummary(q.After))
+	}
+	if imp := r.Impact; imp != nil && imp.Status == "recorded" {
+		fmt.Fprintf(&b, "- API: %d removed, %d changed exported symbols; %d call site(s) in %d file(s)\n", imp.Removed, imp.Changed, len(imp.Sites), imp.FilesAffected)
+	}
+	b.WriteString("\n### Gates\n\n")
+	for _, v := range r.Validations {
+		fmt.Fprintf(&b, "- %s: %s\n", v.Validator, v.Status)
+	}
+	if len(r.ManualReview) > 0 {
+		b.WriteString("\n### Review\n\n")
+		for _, item := range r.ManualReview {
+			fmt.Fprintf(&b, "- %s\n", redact.Text(item))
+		}
+	}
+	fmt.Fprintf(&b, "\nEvolvectl run `%s`. The full report is `.evolvectl/runs/%s/report.html` in the workspace that ran it.\n", r.ID, r.ID)
+	s := b.String()
+	if len(s) > 60000 {
+		s = s[:60000] + "\n\n(truncated)\n"
+	}
+	return s
+}
+
+func countFiles(changes []domain.Change) int {
+	seen := map[string]bool{}
+	for _, c := range changes {
+		seen[c.File] = true
+	}
+	return len(seen)
+}
+
+// ImpactText renders the API comparison and the affected call sites.
+func ImpactText(imp *domain.Impact) string {
+	var b strings.Builder
+	if imp == nil {
+		b.WriteString("API impact           not computed (only Go modules are compared)\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "API impact           %s@%s -> %s@%s\n", imp.Module, imp.From, imp.ToModule, imp.To)
+	if imp.Status != "recorded" {
+		fmt.Fprintf(&b, "  unavailable: %s\n", redact.Text(imp.Reason))
+		return b.String()
+	}
+	fmt.Fprintf(&b, "  %d removed, %d changed, %d added exported symbols; %d method change(s)\n", imp.Removed, imp.Changed, imp.Added, imp.MethodsChanged)
+	for _, c := range imp.Changes {
+		if c.Change == "added" {
+			continue
+		}
+		name := c.Symbol
+		if c.Package != "" {
+			name = c.Package + "." + c.Symbol
+		}
+		fmt.Fprintf(&b, "  %-9s %-6s %s", c.Change, c.Kind, name)
+		switch {
+		case c.Change == "changed":
+			fmt.Fprintf(&b, "\n              was %s\n              now %s\n", c.Before, c.After)
+		case c.Change == "indirect":
+			fmt.Fprintf(&b, " (%s)\n", c.After)
+		default:
+			b.WriteString("\n")
+		}
+	}
+	fmt.Fprintf(&b, "Call sites           %d in %d file(s)\n", len(imp.Sites), imp.FilesAffected)
+	for _, s := range imp.Sites {
+		fmt.Fprintf(&b, "  %s:%d:%d %s %s\n", s.File, s.Line, s.Column, s.Symbol, s.Change)
+	}
+	if imp.Note != "" {
+		fmt.Fprintf(&b, "Note                 %s\n", imp.Note)
+	}
+	return b.String()
+}
+
+func scmText(s *domain.SCMResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Branch               %s (base %s)\n", s.Branch, s.Base)
+	if s.Commit != "" {
+		fmt.Fprintf(&b, "Commit               %s\n", s.Commit)
+	}
+	if s.PRURL != "" {
+		fmt.Fprintf(&b, "Pull request         %s (draft=%v)\n", s.PRURL, s.Draft)
+	}
+	if s.Note != "" {
+		fmt.Fprintf(&b, "Note                 %s\n", redact.Text(s.Note))
 	}
 	return b.String()
 }
@@ -328,6 +451,7 @@ pre { overflow:auto; background:var(--card); padding:.75rem; border:1px solid va
 <a href="#diagnostics">Diagnostics</a>
 <a href="#validations">Validations</a>
 <a href="#quality">Tests and coverage</a>
+<a href="#impact">API impact</a>
 <a href="#copybara">Copybara</a>
 <a href="#artifacts">Artifacts</a>
 </nav>
@@ -386,6 +510,28 @@ pre { overflow:auto; background:var(--card); padding:.75rem; border:1px solid va
 {{if .Quality.Note}}<p>{{.Quality.Note}}</p>{{end}}
 {{else}}<p>No before/after test record. Plan-only runs do not execute tests.</p>{{end}}
 </section>
+<section id="impact"><h2>API impact</h2>
+{{with .Impact}}
+<p>{{.Module}}@{{.From}} → {{.ToModule}}@{{.To}} · status {{.Status}}{{if .Reason}} — {{redact .Reason}}{{end}}</p>
+{{if eq .Status "recorded"}}
+<p>{{.Removed}} removed, {{.Changed}} changed, {{.Added}} added exported symbols · {{.MethodsChanged}} method change(s) · {{len .Sites}} call site(s) in {{.FilesAffected}} file(s)</p>
+<h3>Call sites</h3>
+<table><thead><tr><th>File</th><th>Line</th><th>Symbol</th><th>Change</th></tr></thead><tbody>
+{{range .Sites}}<tr><td>{{.File}}</td><td>{{.Line}}</td><td>{{if .Package}}{{.Package}}.{{end}}{{.Symbol}}</td><td>{{.Change}}</td></tr>{{else}}<tr><td colspan="4">No workspace reference to a removed or changed symbol.</td></tr>{{end}}
+</tbody></table>
+<h3>Exported API differences</h3>
+<table><thead><tr><th>Change</th><th>Kind</th><th>Symbol</th><th>Before</th><th>After</th></tr></thead><tbody>
+{{range .Changes}}<tr><td>{{.Change}}</td><td>{{.Kind}}</td><td>{{if .Package}}{{.Package}}.{{end}}{{.Symbol}}</td><td><code>{{.Before}}</code></td><td><code>{{.After}}</code></td></tr>{{end}}
+</tbody></table>
+{{if .Note}}<p class="meta">{{.Note}}</p>{{end}}
+{{end}}
+{{else}}<p>No API comparison for this run. Only Go modules are compared.</p>{{end}}
+</section>
+{{with .SCM}}<section id="scm"><h2>Branch and pull request</h2>
+<p>Branch {{.Branch}} (base {{.Base}}) · commit {{.Commit}} · pushed={{.Pushed}}</p>
+{{if .PRURL}}<p>Pull request {{.PRURL}} · draft={{.Draft}}</p>{{end}}
+{{if .Note}}<p>{{redact .Note}}</p>{{end}}
+</section>{{end}}
 <section id="copybara"><h2>Copybara</h2>
 {{if .Copybara}}
 <p>Tool available: {{.Copybara.Tool.Available}} {{.Copybara.Tool.Detail}}</p>

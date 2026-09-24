@@ -1,0 +1,39 @@
+{
+  "files": {
+    "MODULE.bazel": {
+      "size": 24,
+      "mtime": 1790269505943669700,
+      "hash": "111bf5893efc4e0dc5934307404906190c70aea9ffea1281499676e87d0a9269"
+    },
+    "README.md": {
+      "size": 186,
+      "mtime": 1790269507164087300,
+      "hash": "d3dbf8d7f65c65778568a7a43eab8c3dde9bcf28280fccf57963daa377fbed3b"
+    },
+    "copy.bara.sky": {
+      "size": 724,
+      "mtime": 1790269503852475500,
+      "hash": "005a85c15ca73c1a87505c8a874cb6c00ed2d0359c777eb6621fc612752d7323"
+    },
+    "go.mod": {
+      "size": 72,
+      "mtime": 1790269504024184600,
+      "hash": "3812b02382757649d5a43e4af04b60f265503263ce9efdc1142bbf6e297742de"
+    },
+    "package.json": {
+      "size": 57,
+      "mtime": 1790269505347679200,
+      "hash": "13ef2a92e8621b57a00501e86bbd9e4207ff90b86b91f7b9ccc18398a5024e52"
+    },
+    "pom.xml": {
+      "size": 198,
+      "mtime": 1790269505074832100,
+      "hash": "c5453f4fd449fb868a5ae38845bb6eef67bd0bffb35ddba60625fe5f317db812"
+    },
+    "pyproject.toml": {
+      "size": 90,
+      "mtime": 1790269504758020600,
+      "hash": "263742a7266f3aa85e92f6e9b30694b872bd2123aaeb93f409e9e85f34a7b82e"
+    }
+  }
+}

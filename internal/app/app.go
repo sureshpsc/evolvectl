@@ -24,10 +24,15 @@ import (
 	"github.com/evolvectl/evolvectl/internal/exitcode"
 	"github.com/evolvectl/evolvectl/internal/fsio"
 	"github.com/evolvectl/evolvectl/internal/graph"
+	"github.com/evolvectl/evolvectl/internal/guide"
+	"github.com/evolvectl/evolvectl/internal/patch"
 	"github.com/evolvectl/evolvectl/internal/planner"
 	"github.com/evolvectl/evolvectl/internal/recipe"
+	"github.com/evolvectl/evolvectl/internal/redact"
+	"github.com/evolvectl/evolvectl/internal/registry"
 	"github.com/evolvectl/evolvectl/internal/report"
 	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/evolvectl/evolvectl/internal/scm"
 	"github.com/evolvectl/evolvectl/internal/session"
 	"github.com/evolvectl/evolvectl/internal/skyparse"
 	"github.com/evolvectl/evolvectl/internal/state"
@@ -43,6 +48,16 @@ type App struct {
 	Dir     string
 	Getenv  func(string) string
 	Version string
+	// Browser opens a local guide file. Nil uses the OS default browser.
+	Browser func(path string) error
+	// Registry answers outdated --online. Nil uses the public endpoints.
+	Registry *registry.Client
+	// Git runs git and gh for --open-pr and batch branches. Nil uses the real binaries.
+	Git scm.Runner
+}
+
+func redactReason(s string) string {
+	return redact.Text(s)
 }
 
 // Option carries shared flags.
@@ -55,6 +70,14 @@ type Option struct {
 	Format     string
 	AllowDirty bool
 	DryRun     bool
+	// ToModule is the module path after the upgrade, for /vN moves and renames.
+	ToModule string
+	// VendorDir copies the module source into the workspace and adds a replace.
+	VendorDir string
+	// OpenPR commits the run on a new branch, pushes it, and opens a pull request.
+	OpenPR bool
+	// PRBase is the pull request base branch. Empty uses the repository default.
+	PRBase string
 }
 
 func (a *App) dir(opt Option) string {
@@ -92,8 +115,9 @@ func (a *App) load(opt Option) (string, config.File, string, string, error) {
 	return dir, cfg, provider, source, nil
 }
 
-// Init writes config and metadata directories.
-func (a *App) Init(opt Option, force, minimal bool) (int, error) {
+// Init writes config, metadata directories, and the offline HTML guide.
+// openGuide launches the start page in the browser after the files exist.
+func (a *App) Init(opt Option, force, minimal, openGuide bool) (int, error) {
 	dir := a.dir(opt)
 	path := config.Path(dir)
 	if _, err := os.Stat(path); err == nil && !force {
@@ -118,8 +142,56 @@ func (a *App) Init(opt Option, force, minimal bool) (int, error) {
 			return exitcode.Generic, err
 		}
 	}
+	guideDir := filepath.Join(dir, ".evolvectl", "guide")
+	if err := guide.Write(guideDir); err != nil {
+		return exitcode.Generic, err
+	}
+	page := filepath.Join(guideDir, "index.html")
 	fmt.Fprintf(a.Out, "Wrote %s\n", path)
+	fmt.Fprintf(a.Out, "Guide %s\n", page)
+	if openGuide {
+		if err := a.openBrowser(page); err != nil {
+			if a.Err != nil {
+				fmt.Fprintf(a.Err, "Could not open the guide (%s).\nOpen %s\n", err.Error(), page)
+			}
+		} else {
+			fmt.Fprintln(a.Out, "Opened the guide in your browser.")
+		}
+	}
 	return exitcode.Success, nil
+}
+
+// OpenGuide writes the HTML guide and optionally opens one page.
+func (a *App) OpenGuide(opt Option, topic string, open bool) (int, error) {
+	file, ok := guide.FileForTopic(topic)
+	if !ok {
+		fmt.Fprintln(a.Out, "Guide pages: index, help, copybara, languages, how-it-works, recipes, examples, troubleshooting")
+		return exitcode.Invalid, fmt.Errorf("unknown guide topic %s", topic)
+	}
+	guideDir := filepath.Join(a.dir(opt), ".evolvectl", "guide")
+	if err := guide.Write(guideDir); err != nil {
+		return exitcode.Generic, err
+	}
+	page := filepath.Join(guideDir, file)
+	fmt.Fprintf(a.Out, "Guide %s\n", page)
+	if !open {
+		return exitcode.Success, nil
+	}
+	if err := a.openBrowser(page); err != nil {
+		if a.Err != nil {
+			fmt.Fprintf(a.Err, "Could not open the guide (%s).\nOpen %s\n", err.Error(), page)
+		}
+		return exitcode.Success, nil
+	}
+	fmt.Fprintln(a.Out, "Opened the guide in your browser.")
+	return exitcode.Success, nil
+}
+
+func (a *App) openBrowser(path string) error {
+	if a.Browser != nil {
+		return a.Browser(path)
+	}
+	return guide.Open(path)
 }
 
 // Scan inventories the workspace.
@@ -164,6 +236,36 @@ func (a *App) Plan(ctx context.Context, opt Option, dependency, to string) (int,
 	return exitcode.Generic, fmt.Errorf("plan was not produced")
 }
 
+// Impact compares the exported API of the current and target versions and lists the call
+// sites in the workspace that use removed or changed symbols. Source is not modified.
+func (a *App) Impact(ctx context.Context, opt Option, dependency, to string) (int, error) {
+	rep, _, err := a.campaign(ctx, opt, dependency, to, true, "plan")
+	if rep == nil || rep.Plan == nil {
+		if err != nil {
+			return exitcode.Invalid, err
+		}
+		return exitcode.Generic, fmt.Errorf("plan was not produced")
+	}
+	switch opt.Format {
+	case "json":
+		b, _ := json.MarshalIndent(rep.Impact, "", "  ")
+		fmt.Fprintf(a.Out, "%s\n", b)
+	case "html":
+		b, err := report.HTML(rep)
+		if err != nil {
+			return exitcode.Generic, err
+		}
+		fmt.Fprintf(a.Out, "%s", b)
+	default:
+		fmt.Fprint(a.Out, report.ImpactText(rep.Impact))
+		fmt.Fprintf(a.Out, "Run id %s. No files changed.\n", rep.ID)
+	}
+	if rep.Impact == nil || rep.Impact.Status != "recorded" {
+		return exitcode.NeedsReview, nil
+	}
+	return exitcode.Success, nil
+}
+
 // Upgrade runs the campaign.
 func (a *App) Upgrade(ctx context.Context, opt Option, dependency, to, resume string) (int, error) {
 	if resume != "" {
@@ -171,10 +273,39 @@ func (a *App) Upgrade(ctx context.Context, opt Option, dependency, to, resume st
 	}
 	halt := ""
 	rep, code, err := a.campaign(ctx, opt, dependency, to, opt.DryRun, halt)
+	if rep != nil && opt.OpenPR {
+		a.publish(ctx, a.dir(opt), rep, opt.PRBase)
+	}
 	if rep != nil {
 		a.writeRun(rep, opt.Format)
 	}
 	return code, err
+}
+
+func (a *App) gitRunner() scm.Runner {
+	if a.Git != nil {
+		return a.Git
+	}
+	return scm.Exec{}
+}
+
+// publish commits the run on a new branch, pushes it, opens a pull request, and saves the result on the run.
+func (a *App) publish(ctx context.Context, dir string, rep *domain.RunReport, base string) {
+	g := scm.Git{R: a.gitRunner(), Dir: dir}
+	body := report.PRBody(rep)
+	bodyFile := filepath.Join(dir, ".evolvectl", "runs", rep.ID, "pr.md")
+	rep.SCM = scm.Publish(ctx, g, rep, base, bodyFile, body)
+	a.saveRun(dir, rep)
+}
+
+func (a *App) saveRun(dir string, rep *domain.RunReport) {
+	st := state.Open(dir)
+	if err := st.SaveReport(rep); err != nil {
+		return
+	}
+	if b, err := report.HTML(rep); err == nil {
+		_ = fsio.WriteAtomic(filepath.Join(dir, ".evolvectl", "runs", rep.ID, "report.html"), b, 0o644)
+	}
 }
 
 func (a *App) resume(ctx context.Context, opt Option, id string) (int, error) {
@@ -212,7 +343,8 @@ func (a *App) campaign(ctx context.Context, opt Option, dependency, to string, d
 	noAI := opt.NoAI || !cfg.AI.Enabled
 	ex := &campaign.Executor{Store: state.Open(dir)}
 	rep, err := ex.Run(ctx, campaign.Request{
-		Workspace: dir, Dependency: dependency, To: to, DryRun: dry, NoAI: noAI, Offline: opt.Offline,
+		Workspace: dir, Dependency: dependency, To: to, ToModule: opt.ToModule, VendorDir: opt.VendorDir,
+		DryRun: dry, NoAI: noAI, Offline: opt.Offline,
 		AllowDirty: opt.AllowDirty, Provider: provider, ProviderSource: source,
 		Confidence: cfg.Repair.ConfidenceThreshold, HaltAfter: halt, PlanOnly: halt == "plan", Config: cfg, Recipes: recipes,
 	})
@@ -293,12 +425,33 @@ func (a *App) printPlan(rep *domain.RunReport, format string) {
 	fmt.Fprintf(a.Out, "Dependency           %s:%s\n", p.Target.Ecosystem, p.Target.Name)
 	fmt.Fprintf(a.Out, "Current              %s\n", strings.Join(p.CurrentVersions, ", "))
 	fmt.Fprintf(a.Out, "Target               %s\n", p.Target.To)
+	extra := ""
+	if p.Target.ToModule != "" && p.Target.ToModule != p.Target.Name {
+		fmt.Fprintf(a.Out, "New module           %s\n", p.Target.ToModule)
+		extra = " --to-module " + p.Target.ToModule
+	}
+	if p.Target.VendorDir != "" {
+		fmt.Fprintf(a.Out, "Vendor into          %s\n", p.Target.VendorDir)
+	}
 	fmt.Fprintf(a.Out, "Projects             %s\n", strings.Join(p.Projects, ", "))
 	fmt.Fprintf(a.Out, "Files                %d\n", len(p.Files))
 	fmt.Fprintf(a.Out, "Recipes              %s\n", strings.Join(p.Recipes, ", "))
-	fmt.Fprintf(a.Out, "Risk                 %s (%s)\n", p.Risk.Level, p.Risk.Confidence)
+	fmt.Fprintf(a.Out, "Risk                 %s (confidence %s)\n", p.Risk.Level, strings.ToLower(string(p.Risk.Confidence)))
+	if imp := rep.Impact; imp != nil {
+		if imp.Status == "recorded" {
+			fmt.Fprintf(a.Out, "API impact           %d removed, %d changed; %d call site(s) in %d file(s). evolvectl impact lists them.\n", imp.Removed, imp.Changed, len(imp.Sites), imp.FilesAffected)
+		} else {
+			fmt.Fprintf(a.Out, "API impact           unavailable: %s\n", redactReason(imp.Reason))
+		}
+	}
 	fmt.Fprintf(a.Out, "Copybara             %s\n", p.CopybaraImpact)
-	fmt.Fprintf(a.Out, "No files changed. Run evolvectl upgrade %s --to %s --apply\n", p.Target.Raw, p.Target.To)
+	if len(p.ReviewPoints) > 0 {
+		fmt.Fprintln(a.Out, "Review")
+		for _, r := range p.ReviewPoints {
+			fmt.Fprintf(a.Out, "  %s\n", r)
+		}
+	}
+	fmt.Fprintf(a.Out, "No files changed. Run evolvectl upgrade %s --to %s%s --apply\n", p.Target.Raw, p.Target.To, extra)
 	if p.Target.Raw == "" {
 		fmt.Fprintf(a.Out, "Run id %s\n", rep.ID)
 	}
@@ -363,8 +516,9 @@ func (a *App) Graph(ctx context.Context, opt Option, dependency, outPath string)
 	return exitcode.Success, nil
 }
 
-// Outdated lists declared dependencies and does not invent registry results.
-func (a *App) Outdated(ctx context.Context, opt Option) (int, error) {
+// Outdated lists declared dependencies. With online it queries the go command, PyPI, npm,
+// Maven Central, and OSV; without it no registry is contacted and nothing is invented.
+func (a *App) Outdated(ctx context.Context, opt Option, online bool) (int, error) {
 	dir, cfg, _, _, err := a.load(opt)
 	if err != nil {
 		return exitcode.Invalid, err
@@ -373,12 +527,57 @@ func (a *App) Outdated(ctx context.Context, opt Option) (int, error) {
 	if err != nil {
 		return exitcode.Discovery, err
 	}
+	if online {
+		if opt.Offline {
+			return exitcode.Invalid, fmt.Errorf("pass only one of --online and --offline")
+		}
+		client := a.Registry
+		if client == nil {
+			client = registry.New()
+		}
+		findings := client.Check(ctx, inv.Dependencies)
+		registry.Apply(inv.Dependencies, findings, time.Now().UTC())
+		switch opt.Format {
+		case "json":
+			b, _ := json.MarshalIndent(findings, "", "  ")
+			fmt.Fprintf(a.Out, "%s\n", b)
+		case "html":
+			b, err := report.InventoryHTML(inv)
+			if err != nil {
+				return exitcode.Generic, err
+			}
+			fmt.Fprintf(a.Out, "%s", b)
+		default:
+			fmt.Fprintln(a.Out, "Direct dependencies. Go versions come from go list -m (GOPROXY applies); advisories come from OSV.")
+			counts := map[string]int{}
+			for _, f := range findings {
+				counts[f.Status]++
+				latest := f.Latest
+				if latest == "" {
+					latest = "-"
+				}
+				fmt.Fprintf(a.Out, "%-8s %-50s %-40s %-24s %s\n", f.Ecosystem, f.Dependency, f.Current, latest, f.Status)
+				if f.Status != domain.StatusCurrent && f.Reason != "" {
+					fmt.Fprintf(a.Out, "         %s\n", redactReason(f.Reason))
+				}
+			}
+			fmt.Fprintf(a.Out, "current %d, update_available %d, security_update %d, other %d\n",
+				counts[domain.StatusCurrent], counts[domain.StatusUpdateAvailable], counts[domain.StatusSecurityUpdate],
+				len(findings)-counts[domain.StatusCurrent]-counts[domain.StatusUpdateAvailable]-counts[domain.StatusSecurityUpdate])
+		}
+		for _, f := range findings {
+			if f.Status == domain.StatusSecurityUpdate {
+				return exitcode.NeedsReview, nil
+			}
+		}
+		return exitcode.Success, nil
+	}
 	if opt.Format == "json" {
 		b, _ := json.MarshalIndent(inv.Dependencies, "", "  ")
 		fmt.Fprintf(a.Out, "%s\n", b)
 		return exitcode.Success, nil
 	}
-	fmt.Fprintln(a.Out, "Declared dependencies. Registry status is unavailable unless a snapshot was supplied; none was queried.")
+	fmt.Fprintln(a.Out, "Declared dependencies. No registry was queried; pass --online for latest versions and advisories.")
 	for _, d := range inv.Dependencies {
 		if !d.Direct {
 			continue
@@ -694,6 +893,51 @@ func (a *App) CopybaraExplain(opt Option, path, workflow, file, format string) (
 	return exitcode.Success, nil
 }
 
+// CopybaraPin sets the origin ref of one workflow in copy.bara.sky and prints the diff.
+// It does not run Copybara.
+func (a *App) CopybaraPin(opt Option, path, workflow, ref string, dry bool) (int, error) {
+	if workflow == "" || ref == "" {
+		return exitcode.Invalid, fmt.Errorf("--workflow and --ref are required")
+	}
+	if path == "" {
+		path = "copy.bara.sky"
+	}
+	full := path
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(a.dir(opt), path)
+	}
+	b, err := os.ReadFile(full)
+	if err != nil {
+		return exitcode.Invalid, err
+	}
+	out, old, err := skyparse.Pin(string(b), workflow, ref)
+	if err != nil {
+		return exitcode.Invalid, err
+	}
+	if out == string(b) {
+		fmt.Fprintf(a.Out, "Workflow %s already pins %s. No change.\n", workflow, ref)
+		return exitcode.Success, nil
+	}
+	fmt.Fprint(a.Out, redact.Text(patch.Unified(filepath.ToSlash(path), string(b), out)))
+	if old == "" {
+		old = "<none>"
+	}
+	fmt.Fprintf(a.Out, "Workflow %s ref %s -> %s\n", workflow, old, ref)
+	if dry {
+		fmt.Fprintln(a.Out, "Dry run: file not written. Copybara was not run.")
+		return exitcode.Success, nil
+	}
+	info, err := os.Stat(full)
+	if err != nil {
+		return exitcode.Generic, err
+	}
+	if err := fsio.WriteAtomic(full, []byte(out), info.Mode().Perm()); err != nil {
+		return exitcode.Generic, err
+	}
+	fmt.Fprintf(a.Out, "Wrote %s. Copybara was not run; run copybara migrate yourself when ready.\n", filepath.ToSlash(path))
+	return exitcode.Success, nil
+}
+
 // BenchmarkScan times one scan.
 func (a *App) BenchmarkScan(ctx context.Context, opt Option) (int, error) {
 	dir, cfg, _, _, err := a.load(opt)
@@ -795,7 +1039,9 @@ func normalize(b []byte) string {
 func (a *App) Docs(topic string) (int, error) {
 	text, ok := docTopics[topic]
 	if !ok {
-		fmt.Fprintln(a.Out, "Topics: quickstart, providers, recipes, copybara, examples, troubleshooting, ui")
+		fmt.Fprintln(a.Out, "Topics: quickstart, providers, recipes, copybara, languages, examples, troubleshooting, ui, session")
+		fmt.Fprintln(a.Out, "HTML guide: evolvectl docs <topic> --format html")
+		fmt.Fprintln(a.Out, "Commands: evolvectl help")
 		for k := range docTopics {
 			fmt.Fprintf(a.Out, "  %s\n", k)
 		}

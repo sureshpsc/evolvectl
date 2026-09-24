@@ -67,6 +67,17 @@ type Transform struct {
 	TargetField   string    `yaml:"target_field" json:"target_field"`
 	TargetKeyword string    `yaml:"target_keyword" json:"target_keyword"`
 	Arguments     Arguments `yaml:"arguments" json:"arguments"`
+	Callback      Callback  `yaml:"callback" json:"callback"`
+}
+
+// Callback appends a parameter to a function literal passed at Index. The edit applies only
+// when the literal has WhenParams parameters. {pkg} in Type is the file's name for the
+// matched import.
+type Callback struct {
+	Index      int    `yaml:"index" json:"index"`
+	Name       string `yaml:"name" json:"name"`
+	Type       string `yaml:"type" json:"type"`
+	WhenParams int    `yaml:"when_params" json:"when_params"`
 }
 
 // Arguments describes call edits.
@@ -108,6 +119,7 @@ var allowedTransforms = map[string]bool{
 	"call_argument_insert":    true,
 	"call_rewrite":            true,
 	"struct_field_rename":     true,
+	"callback_param_append":   true,
 	"python_import_rename":    true,
 	"python_decorator_rename": true,
 	"python_symbol_rename":    true,

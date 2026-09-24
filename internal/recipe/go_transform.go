@@ -12,6 +12,7 @@ import (
 
 	"github.com/evolvectl/evolvectl/internal/domain"
 	"github.com/evolvectl/evolvectl/internal/idgen"
+	"github.com/evolvectl/evolvectl/internal/modmove"
 	"github.com/evolvectl/evolvectl/internal/patch"
 )
 
@@ -100,6 +101,8 @@ func rewriteGo(file *ast.File, r Recipe) (bool, error) {
 		return rewriteCalls(file, r)
 	case "struct_field_rename":
 		return rewriteFields(file, r), nil
+	case "callback_param_append":
+		return appendCallbackParam(file, r)
 	default:
 		return false, nil
 	}
@@ -112,7 +115,7 @@ func importNames(file *ast.File) (named map[string]string, dots []string) {
 		if err != nil {
 			continue
 		}
-		local := path.Base(pathValue)
+		local := modmove.GuessName(pathValue)
 		if imp.Name != nil {
 			if imp.Name.Name == "_" {
 				continue
@@ -259,6 +262,69 @@ func editCall(call *ast.CallExpr, r Recipe) error {
 		call.Args[ins.Index] = expr
 	}
 	return nil
+}
+
+func appendCallbackParam(file *ast.File, r Recipe) (bool, error) {
+	cb := r.Spec.Transform.Callback
+	if cb.Type == "" {
+		return false, fmt.Errorf("callback.type is required")
+	}
+	named, dots := importNames(file)
+	local := ""
+	for name, p := range named {
+		if p == r.Spec.Match.Package {
+			local = name
+		}
+	}
+	typeSrc := cb.Type
+	if strings.Contains(typeSrc, "{pkg}") {
+		if local == "" {
+			return false, nil
+		}
+		typeSrc = strings.ReplaceAll(typeSrc, "{pkg}", local)
+	}
+	name := cb.Name
+	if name == "" {
+		name = "_"
+	}
+	changed := false
+	var firstErr error
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !matchCall(call, named, dots, r) || cb.Index < 0 || cb.Index >= len(call.Args) {
+			return true
+		}
+		lit, ok := call.Args[cb.Index].(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		count := 0
+		if lit.Type.Params != nil {
+			for _, f := range lit.Type.Params.List {
+				if len(f.Names) == 0 {
+					count++
+				}
+				count += len(f.Names)
+			}
+		}
+		if count != cb.WhenParams {
+			return true
+		}
+		typ, err := parser.ParseExpr(typeSrc)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("callback type: %w", err)
+			}
+			return true
+		}
+		pos := lit.Type.Params.Closing
+		placeNear(typ, pos)
+		field := &ast.Field{Names: []*ast.Ident{{Name: name, NamePos: pos}}, Type: typ}
+		lit.Type.Params.List = append(lit.Type.Params.List, field)
+		changed = true
+		return true
+	})
+	return changed, firstErr
 }
 
 func placeNear(n ast.Node, pos token.Pos) {

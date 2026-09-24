@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/semver"
+
 	"github.com/evolvectl/evolvectl/internal/domain"
 	"github.com/evolvectl/evolvectl/internal/fsio"
 	"github.com/evolvectl/evolvectl/internal/idgen"
@@ -46,16 +49,26 @@ func goSumDecision(offline, localReplace bool, sum []byte, modulePath, version s
 	return fmt.Errorf("offline: go.sum was not updated for %s@%s; re-run without --offline or add the sum entry", modulePath, version)
 }
 
-func (e *Executor) rejectMissingSums(rc *runCtx) error {
-	if rc.report.Target.Ecosystem != "go" || rc.report.Plan == nil {
+func goModFiles(rc *runCtx) []string {
+	if rc.report.Plan == nil {
 		return nil
 	}
-	modulePath := rc.report.Target.Name
-	version := normalizeTarget("go", rc.report.Target.To)
+	var out []string
 	for _, rel := range rc.report.Plan.Manifests {
-		if !strings.HasSuffix(rel, "go.mod") {
-			continue
+		if strings.HasSuffix(rel, "go.mod") {
+			out = append(out, rel)
 		}
+	}
+	return out
+}
+
+func (e *Executor) rejectMissingSums(rc *runCtx) error {
+	if rc.report.Target.Ecosystem != "go" || rc.report.Target.VendorDir != "" {
+		return nil
+	}
+	modulePath := rc.report.Target.Module()
+	version := normalizeTarget("go", rc.report.Target.To)
+	for _, rel := range goModFiles(rc) {
 		dir := filepath.Dir(filepath.Join(rc.workRoot, filepath.FromSlash(rel)))
 		body, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err != nil {
@@ -71,30 +84,52 @@ func (e *Executor) rejectMissingSums(rc *runCtx) error {
 	return nil
 }
 
-func (e *Executor) syncGoSums(ctx context.Context, rc *runCtx, changes *[]domain.Change) error {
-	if rc.report.Target.Ecosystem != "go" || rc.report.Plan == nil {
+// capturePristine keeps the first bytes seen for each go.mod and go.sum in the plan, so every
+// later edit is diffed against the workspace as it was before the run.
+func (e *Executor) capturePristine(rc *runCtx) {
+	if rc.pristine != nil {
+		return
+	}
+	rc.pristine = map[string][]byte{}
+	for _, rel := range goModFiles(rc) {
+		for _, f := range []string{rel, sumOf(rel)} {
+			b, err := os.ReadFile(filepath.Join(rc.workRoot, filepath.FromSlash(f)))
+			if err != nil {
+				rc.pristine[f] = nil
+				continue
+			}
+			rc.pristine[f] = b
+		}
+	}
+}
+
+func sumOf(gomod string) string {
+	return strings.TrimSuffix(gomod, "go.mod") + "go.sum"
+}
+
+// syncGoSums asks the go command to make go.mod and go.sum consistent with the new requirement.
+// A module move or a vendored copy also runs go mod tidy, so the old module's sums drop out
+// and the new module's dependencies are added.
+func (e *Executor) syncGoSums(ctx context.Context, rc *runCtx) error {
+	t := rc.report.Target
+	if t.Ecosystem != "go" || rc.report.Plan == nil {
 		return nil
 	}
-	modulePath := rc.report.Target.Name
-	version := normalizeTarget("go", rc.report.Target.To)
-	for _, rel := range rc.report.Plan.Manifests {
-		if !strings.HasSuffix(rel, "go.mod") {
-			continue
-		}
+	modulePath := t.Module()
+	version := normalizeTarget("go", t.To)
+	tidy := t.VendorDir != "" || (t.ToModule != "" && t.ToModule != t.Name)
+	for _, rel := range goModFiles(rc) {
 		dir := filepath.Dir(filepath.Join(rc.workRoot, filepath.FromSlash(rel)))
 		body, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err != nil {
 			return err
 		}
-		sumPath := filepath.Join(dir, "go.sum")
-		sumBefore, _ := os.ReadFile(sumPath)
 		local := manifest.HasLocalReplace(body, modulePath)
 		if local {
 			rc.report.PolicyDecisions = append(rc.report.PolicyDecisions, domain.PolicyDecision{
 				ID: idgen.New("pol_"), Action: "go-sum", Path: rel, Allowed: true,
-				Reason: modulePath + " uses a local replace; go.sum was not fetched",
+				Reason: modulePath + " uses a local replace; go get was not run",
 			})
-			continue
 		}
 		if rc.req.Offline {
 			continue
@@ -104,71 +139,121 @@ func (e *Executor) syncGoSums(ctx context.Context, rc *runCtx, changes *[]domain
 			rc.report.Outcome = domain.OutcomeFailed
 			return fmt.Errorf("go is not on PATH; go.sum was not updated for %s@%s", modulePath, version)
 		}
-		modBefore := body
-		run := runner.Run(ctx, runner.Request{
-			Argv:    []string{goBin, "get", modulePath + "@" + version},
-			Dir:     dir,
-			Timeout: 2 * time.Minute,
-		})
+		if !local {
+			run := runner.Run(ctx, runner.Request{
+				Argv: []string{goBin, "get", modulePath + "@" + version}, Dir: dir, Timeout: 3 * time.Minute,
+			})
+			if run.ExitCode != 0 {
+				rc.report.Outcome = domain.OutcomeFailed
+				return fmt.Errorf("go get %s@%s: %s", modulePath, version, trimLog(firstNonEmpty(run.Stderr+" "+run.Err, run.Stdout)))
+			}
+		}
+		if !tidy {
+			continue
+		}
+		run := runner.Run(ctx, runner.Request{Argv: []string{goBin, "mod", "tidy"}, Dir: dir, Timeout: 5 * time.Minute})
 		if run.ExitCode != 0 {
-			rc.report.Outcome = domain.OutcomeFailed
-			detail := strings.TrimSpace(run.Stderr + " " + run.Err)
-			if detail == "" {
-				detail = run.Stdout
-			}
-			return fmt.Errorf("go get %s@%s: %s", modulePath, version, trimLog(detail))
-		}
-		modAfter, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err != nil {
-			return err
-		}
-		sumAfter, _ := os.ReadFile(sumPath)
-		orig := modBefore
-		if b, err := os.ReadFile(filepath.Join(rc.origRoot, ".evolvectl", "snapshots", rc.report.ID, filepath.FromSlash(rel))); err == nil {
-			orig = b
-		}
-		updateModChange(changes, rel, orig, modAfter)
-		if string(sumBefore) != string(sumAfter) {
-			sumRel := fsio.RelSlash(rc.workRoot, sumPath)
-			if !rc.req.DryRun && len(sumBefore) > 0 {
-				if err := snapshot(rc.origRoot, rc.report.ID, sumRel, sumBefore); err != nil {
-					return err
-				}
-			}
-			ch := fileChange(sumRel, sumBefore, sumAfter, "go get wrote go.sum for "+modulePath+"@"+version)
-			if len(sumBefore) == 0 {
-				ch.BeforeHash = ""
-			}
-			*changes = append(*changes, ch)
+			rc.report.ManualReview = appendUnique(rc.report.ManualReview, rel+": go mod tidy failed: "+trimLog(firstNonEmpty(run.Stderr, run.Err)))
 		}
 	}
 	return nil
 }
 
-func updateModChange(changes *[]domain.Change, rel string, before, after []byte) {
-	if string(before) == string(after) {
-		return
-	}
-	for i := range *changes {
-		if (*changes)[i].File != rel {
-			continue
+// recordManifests writes one change per go.mod and go.sum, diffed against the pristine bytes.
+// A repeat call during repair updates the existing change instead of adding another.
+func (e *Executor) recordManifests(rc *runCtx, changes *[]domain.Change, reason string) error {
+	for _, rel := range goModFiles(rc) {
+		for _, f := range []string{rel, sumOf(rel)} {
+			before, known := rc.pristine[f]
+			if !known {
+				continue
+			}
+			abs := filepath.Join(rc.workRoot, filepath.FromSlash(f))
+			after, err := os.ReadFile(abs)
+			if err != nil {
+				continue
+			}
+			if string(after) == string(before) {
+				continue
+			}
+			if !rc.req.DryRun && before != nil {
+				if err := snapshot(rc.origRoot, rc.report.ID, f, before); err != nil {
+					return err
+				}
+			}
+			why := reason
+			id := "engine:manifest-bump"
+			if strings.HasSuffix(f, "go.sum") {
+				why = "go.sum updated by the go command"
+				id = "engine:go-get"
+			} else {
+				for _, d := range lowered(f, before, after, rc.report.Target.Name) {
+					rc.report.ManualReview = appendUnique(rc.report.ManualReview, d)
+				}
+			}
+			upsertChange(rc, changes, f, before, after, id, why)
 		}
-		(*changes)[i].AfterHash = fsio.HashBytes(after)
-		(*changes)[i].Diff = patch.Unified(rel, string(before), string(after))
-		return
 	}
+	return nil
 }
 
-func fileChange(rel string, before, after []byte, reason string) domain.Change {
-	return domain.Change{
-		ID:         idgen.New("chg_"),
-		File:       rel,
-		Kind:       "manifest",
-		RecipeID:   "engine:go-get",
-		Confidence: domain.ConfidenceHigh,
-		Diff:       patch.Unified(rel, string(before), string(after)),
-		BeforeHash: fsio.HashBytes(before),
-		AfterHash:  fsio.HashBytes(after),
-		Reason:     reason,
+// lowered lists requirements whose version went down between two go.mod files. The go command
+// can do this when a module move drops the dependency that held a version up.
+func lowered(rel string, before, after []byte, target string) []string {
+	if before == nil {
+		return nil
 	}
+	old, err := modfile.ParseLax(rel, before, nil)
+	if err != nil {
+		return nil
+	}
+	cur, err := modfile.ParseLax(rel, after, nil)
+	if err != nil {
+		return nil
+	}
+	was := map[string]string{}
+	for _, r := range old.Require {
+		was[r.Mod.Path] = r.Mod.Version
+	}
+	var out []string
+	for _, r := range cur.Require {
+		prev, ok := was[r.Mod.Path]
+		if !ok || r.Mod.Path == target || semver.Compare(r.Mod.Version, prev) >= 0 {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s: %s went down from %s to %s; check that nothing relied on the newer version", rel, r.Mod.Path, prev, r.Mod.Version))
+	}
+	return out
+}
+
+func upsertChange(rc *runCtx, changes *[]domain.Change, rel string, before, after []byte, recipeID, reason string) {
+	diff := patch.Unified(rel, string(before), string(after))
+	beforeHash := ""
+	if before != nil {
+		beforeHash = fsio.HashBytes(before)
+	}
+	for _, list := range []*[]domain.Change{changes, &rc.report.Changes} {
+		for i := range *list {
+			c := &(*list)[i]
+			if c.File == rel && c.Kind == "manifest" {
+				c.Diff = diff
+				c.AfterHash = fsio.HashBytes(after)
+				c.Reason = reason
+				return
+			}
+		}
+	}
+	*changes = append(*changes, domain.Change{
+		ID: idgen.New("chg_"), File: rel, Kind: "manifest", RecipeID: recipeID, Confidence: domain.ConfidenceHigh,
+		Diff: diff, BeforeHash: beforeHash, AfterHash: fsio.HashBytes(after), Reason: reason,
+	})
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }

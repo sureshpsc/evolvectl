@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -67,12 +68,17 @@ type flags struct {
 	allowDirty bool
 	dryRun     bool
 	apply      bool
+	toModule   string
+	vendorDir  string
+	openPR     bool
+	prBase     string
 }
 
 func (f flags) opt() app.Option {
 	return app.Option{
 		Workspace: f.workspace, ConfigPath: f.config, Provider: f.provider,
 		NoAI: f.noAI, Offline: f.offline, Format: f.format, AllowDirty: f.allowDirty, DryRun: f.dryRun,
+		ToModule: f.toModule, VendorDir: f.vendorDir, OpenPR: f.openPR, PRBase: f.prBase,
 	}
 }
 
@@ -99,15 +105,25 @@ func NewRoot() *cobra.Command {
 		Long: `Evolvectl discovers a repository, plans a dependency upgrade, applies deterministic recipes, validates, and writes a report.
 
 Golden workflow:
-  1. evolvectl session export <provider>
+  1. evolvectl init
   2. evolvectl scan
   3. evolvectl plan <target> --to <version>
   4. evolvectl upgrade <target> --to <version>
   5. evolvectl report --run <id> --format html
 
+More:
+  evolvectl outdated --online                 latest versions and known vulnerabilities
+  evolvectl impact <target> --to <version>    API differences and the call sites they hit
+  evolvectl upgrade <old> --to v2.0.2 --to-module <old>/v2   major version or module move
+  evolvectl batch --file upgrades.csv         every row of an upgrade sheet, one report
+  evolvectl vendor <module> --to <v> --dir third_party/<name>
+  evolvectl copybara pin --workflow <name> --ref <commit-or-tag>
+
+init writes .evolvectl/guide and opens index.html. evolvectl help opens the command reference. evolvectl docs <topic> --format html opens that page.
+
 upgrade stores a styled HTML report at .evolvectl/runs/<id>/report.html, including dependency inventory, diffs, grouped failures, and before/after tests and coverage. --format html prints that page. --offline keeps go test from downloading modules.
 
-AI is optional. --no-ai keeps the deterministic path. Copybara is one provider, not the campaign engine.
+AI is optional. --no-ai keeps the deterministic path. copybara explain reads copy.bara.sky. You run copybara migrate yourself. upgrade edits the checkout you named.
 
 Exit codes: 0 success, 2 bad arguments, 5 validation failed, 6 needs review, 7 policy, 8 tool missing, 9 dirty worktree, 10 interrupted.`,
 		SilenceErrors: true,
@@ -127,7 +143,10 @@ Exit codes: 0 success, 2 bad arguments, 5 validation failed, 6 needs review, 7 p
 		graphCmd(&f),
 		outdatedCmd(&f),
 		planCmd(&f),
+		impactCmd(&f),
 		upgradeCmd(&f),
+		vendorCmd(&f),
+		batchCmd(&f),
 		analyzeCmd(&f),
 		repairCmd(),
 		validateCmd(&f),
@@ -140,12 +159,13 @@ Exit codes: 0 success, 2 bad arguments, 5 validation failed, 6 needs review, 7 p
 		adaptersCmd(&f),
 		providerCmd(),
 		sessionCmd(),
-		docsCmd(),
+		docsCmd(&f),
 		benchmarkCmd(&f),
 		doctorCmd(&f),
 		uiCmd(&f),
 		copybaraCmd(&f),
 		completionCmd(root),
+		helpCmd(root, &f),
 	)
 	return root
 }
@@ -163,25 +183,30 @@ func versionCmd() *cobra.Command {
 }
 
 func initCmd(f *flags) *cobra.Command {
-	var force, minimal bool
+	var force, minimal, noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create .evolvectl.yaml and local metadata directories",
-		Long: `Create .evolvectl.yaml and .evolvectl/.
+		Short: "Create config, metadata directories, and open the HTML guide",
+		Long: `Create .evolvectl.yaml, .evolvectl/, and the offline HTML guide.
 
-Does not select a provider for future terminals. Use evolvectl session export for that.
+Opens .evolvectl/guide/index.html in the browser. Pass --no-browser to write the files only.
+The guide explains Copybara, other tools in that role, each language, and every command.
+
+Init leaves EVOLVECTL_WORKSPACE_PROVIDER unset. Use evolvectl session export to select a provider in this terminal.
 
 Exit codes: 0 written, 2 config already exists.`,
-		Example: "  evolvectl init\n  evolvectl init --force --no-ai",
+		Example: "  evolvectl init\n  evolvectl init --no-browser\n  evolvectl init --force --no-ai",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a := application()
 			a.Out = cmd.OutOrStdout()
-			code, err := a.Init(f.opt(), force, minimal)
+			a.Err = cmd.ErrOrStderr()
+			code, err := a.Init(f.opt(), force, minimal, !noBrowser)
 			return finish(code, err)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "replace an existing config")
 	cmd.Flags().BoolVar(&minimal, "minimal", false, "write a smaller ignore list")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "write the HTML guide without opening a browser")
 	return cmd
 }
 
@@ -222,18 +247,128 @@ func graphCmd(f *flags) *cobra.Command {
 }
 
 func outdatedCmd(f *flags) *cobra.Command {
-	return &cobra.Command{
-		Use:     "outdated",
-		Short:   "List declared dependencies without claiming registry freshness",
-		Long:    "Prints declared versions. Status stays registry_unavailable until a registry is queried. This build does not query registries during outdated.",
-		Example: "  evolvectl outdated\n  evolvectl outdated --format json",
+	var online bool
+	cmd := &cobra.Command{
+		Use:   "outdated",
+		Short: "List declared dependencies, and with --online their latest versions and vulnerabilities",
+		Long: `Without --online, prints declared versions and leaves status as registry_unavailable.
+
+With --online, asks the real sources: go list -m <module>@latest (through your GOPROXY, including the next major path such as /v2), PyPI, the npm registry, Maven Central, and OSV for known vulnerabilities of the exact declared version. Ranges are reported as unresolved rather than guessed.
+
+Exit codes: 0 listed, 6 at least one declared version has a known vulnerability.`,
+		Example: "  evolvectl outdated\n  evolvectl outdated --online\n  evolvectl outdated --online --format html > outdated.html",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			a := application()
 			a.Out = cmd.OutOrStdout()
-			code, err := a.Outdated(context.Background(), f.opt())
+			code, err := a.Outdated(context.Background(), f.opt(), online)
 			return finish(code, err)
 		},
 	}
+	cmd.Flags().BoolVar(&online, "online", false, "query registries and OSV")
+	return cmd
+}
+
+func impactCmd(f *flags) *cobra.Command {
+	var dep, to string
+	cmd := &cobra.Command{
+		Use:   "impact [dependency]",
+		Short: "List the API differences between two versions and the call sites they affect",
+		Long: `Downloads both versions (go mod download, or a local replace directory), compares their exported API, and lists every file and line in this workspace that uses a removed or changed symbol.
+
+Use --to-module for a major-version move such as github.com/googleapis/gax-go to github.com/googleapis/gax-go/v2.
+The comparison reads declarations and is not type-checked. Source is not modified. Go only.
+
+Exit codes: 0 impact recorded, 6 impact unavailable (for example offline with an empty module cache).`,
+		Example: "  evolvectl impact github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2\n  evolvectl impact google.golang.org/grpc --to v1.75.0 --format json",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				dep = args[0]
+			}
+			if dep == "" {
+				return finish(exitcode.Invalid, fmt.Errorf("dependency is required"))
+			}
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.Impact(context.Background(), f.opt(), dep, to)
+			return finish(code, err)
+		},
+	}
+	cmd.Flags().StringVar(&dep, "dependency", "", "module path")
+	cmd.Flags().StringVar(&to, "to", "", "target version")
+	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move")
+	return cmd
+}
+
+func vendorCmd(f *flags) *cobra.Command {
+	var dep, to string
+	cmd := &cobra.Command{
+		Use:   "vendor [module]",
+		Short: "Copy a module version into a third_party directory and point go.mod at it",
+		Long: `Downloads the module version, replaces the directory named by --dir with its files, writes METADATA.evolvectl.json (module, version, go.sum hash, license file), adds a replace directive to each go.mod, then validates like upgrade.
+
+A missing license file ends the run as needs-review. Rollback restores the previous directory. --dry-run works on a copy.
+This is the open-source-repository version of a third_party import. It does not write Google BUILD or METADATA files.`,
+		Example: "  evolvectl vendor github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --dir third_party/gax\n  evolvectl vendor golang.org/x/text --to v0.21.0 --dir third_party/text --dry-run",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				dep = args[0]
+			}
+			if dep == "" || f.vendorDir == "" {
+				return finish(exitcode.Invalid, fmt.Errorf("module and --dir are required"))
+			}
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.Upgrade(context.Background(), f.opt(), dep, to, "")
+			return finish(code, err)
+		},
+	}
+	cmd.Flags().StringVar(&dep, "dependency", "", "module path")
+	cmd.Flags().StringVar(&to, "to", "", "version to vendor")
+	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move")
+	cmd.Flags().StringVar(&f.vendorDir, "dir", "", "destination directory, relative to the workspace")
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "do not modify the original workspace")
+	addPRFlags(cmd, f)
+	return cmd
+}
+
+func batchCmd(f *flags) *cobra.Command {
+	var file, mode string
+	cmd := &cobra.Command{
+		Use:   "batch",
+		Short: "Run every upgrade in a CSV or YAML sheet and write one combined report",
+		Long: `Reads rows of dependency, target version, optional new module, workspace, and owner.
+
+CSV headers are matched loosely: Dependency/Package/Module, To/Target Version, To Module, Workspace/Path/Directory, Owner/Developer Owner. YAML uses an upgrades: list with the same keys.
+
+Modes:
+  dry-run   (default) each row runs on its own temporary copy; nothing in the workspace changes
+  apply     rows edit the workspace one after another
+  branches  each row runs on a new branch from the current commit and is committed there; needs a clean worktree
+
+--open-pr (branches mode only) pushes each committed branch and opens a pull request with gh.
+The combined report is written to .evolvectl/batches/<id>/batch.html, batch.md, and batch.json.
+
+Exit codes: 0 all rows succeeded, 6 some need review, 4 some failed.`,
+		Example: "  evolvectl batch --file upgrades.csv\n  evolvectl batch --file upgrades.yaml --mode branches\n  evolvectl batch --file upgrades.csv --mode branches --open-pr --pr-base main",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if file == "" {
+				return finish(exitcode.Invalid, fmt.Errorf("--file is required"))
+			}
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.Batch(context.Background(), f.opt(), file, mode, f.openPR)
+			return finish(code, err)
+		},
+	}
+	cmd.Flags().StringVar(&file, "file", "", "CSV or YAML upgrade sheet")
+	cmd.Flags().StringVar(&mode, "mode", "dry-run", "dry-run, apply, or branches")
+	addPRFlags(cmd, f)
+	return cmd
+}
+
+func addPRFlags(cmd *cobra.Command, f *flags) {
+	cmd.Flags().BoolVar(&f.openPR, "open-pr", false, "commit on a new branch, push it, and open a pull request with gh; off by default")
+	cmd.Flags().StringVar(&f.prBase, "pr-base", "", "pull request base branch (default: the repository default)")
 }
 
 func planCmd(f *flags) *cobra.Command {
@@ -261,6 +396,7 @@ Exit codes: 0 plan written, 2 unknown dependency or bad arguments.`,
 	}
 	cmd.Flags().StringVar(&dep, "dependency", "", "ecosystem:name or module path")
 	cmd.Flags().StringVar(&to, "to", "", "target version")
+	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move, such as <module>/v2")
 	return cmd
 }
 
@@ -274,8 +410,11 @@ func upgradeCmd(f *flags) *cobra.Command {
 --dry-run copies the workspace to a temp directory and leaves the original source unchanged.
 --no-ai is the deterministic path. Semantic repair is unavailable for ecosystems without a recipe adapter; those runs finish as needs-review instead of pretending tests passed.
 
+--to-module moves Go code to a new module path, for example a /v2 major version: go.mod require, every import, go.sum, and recipes for the new API. Package names used in code are not renamed.
+--open-pr commits the changed files on a new branch, pushes it, and opens a pull request with the report as its body. It never force-pushes and is off by default.
+
 Exit codes: 0 required gates passed, 5 validation failed, 6 needs review, 7 policy, 9 dirty worktree, 10 interrupted.`,
-		Example: "  evolvectl upgrade google.golang.org/grpc --to v1.75.0\n  evolvectl upgrade python:pydantic --to 2.11.0 --dry-run",
+		Example: "  evolvectl upgrade google.golang.org/grpc --to v1.75.0\n  evolvectl upgrade github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2\n  evolvectl upgrade python:pydantic --to 2.11.0 --dry-run\n  evolvectl upgrade google.golang.org/grpc --to v1.75.0 --open-pr --pr-base main",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				dep = args[0]
@@ -296,6 +435,8 @@ Exit codes: 0 required gates passed, 5 validation failed, 6 needs review, 7 poli
 	cmd.Flags().StringVar(&resume, "resume", "", "resume a cancelled run id")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "do not modify the original workspace")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "accepted for explicitness; upgrade already writes unless --dry-run is set")
+	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move, such as <module>/v2")
+	addPRFlags(cmd, f)
 	return cmd
 }
 
@@ -555,10 +696,17 @@ func sessionCmd() *cobra.Command {
 	return cmd
 }
 
-func docsCmd() *cobra.Command {
-	return &cobra.Command{
+func docsCmd(f *flags) *cobra.Command {
+	var noBrowser bool
+	cmd := &cobra.Command{
 		Use:   "docs [topic]",
-		Short: "Print offline documentation",
+		Short: "Print a short topic, or open it as HTML",
+		Long: `With the default text format, print a short topic.
+
+With --format html, write .evolvectl/guide and open that page.
+Topics: quickstart, providers, recipes, copybara, languages, examples, troubleshooting, ui, session.
+evolvectl help opens the command reference.`,
+		Example: "  evolvectl docs copybara\n  evolvectl docs languages --format html\n  evolvectl docs --format html --no-browser",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			topic := ""
 			if len(args) == 1 {
@@ -566,10 +714,53 @@ func docsCmd() *cobra.Command {
 			}
 			a := application()
 			a.Out = cmd.OutOrStdout()
+			a.Err = cmd.ErrOrStderr()
+			if f.format == "html" {
+				code, err := a.OpenGuide(f.opt(), topic, !noBrowser)
+				return finish(code, err)
+			}
 			code, err := a.Docs(topic)
 			return finish(code, err)
 		},
 	}
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "write the HTML guide without opening a browser")
+	return cmd
+}
+
+func helpCmd(root *cobra.Command, f *flags) *cobra.Command {
+	var noBrowser bool
+	cmd := &cobra.Command{
+		Use:   "help [command]",
+		Short: "Open the HTML command guide, or print help for one command",
+		Long: `With no arguments, write .evolvectl/guide and open help.html.
+
+That page lists every command with an explanation and an example. The start page explains how evolvectl differs from Copybara and how each language is handled.
+
+With a command name, print that command's terminal help.
+evolvectl --help prints the short terminal summary.`,
+		Example: "  evolvectl help\n  evolvectl help upgrade\n  evolvectl help copybara explain\n  evolvectl help --no-browser",
+		Args:    cobra.MaximumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				sub, _, err := root.Find(args)
+				if err != nil || sub == nil || sub == root {
+					return finish(exitcode.Invalid, fmt.Errorf("unknown command %s", strings.Join(args, " ")))
+				}
+				if sub != cmd {
+					sub.SetOut(cmd.OutOrStdout())
+					sub.SetErr(cmd.ErrOrStderr())
+					return sub.Help()
+				}
+			}
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			a.Err = cmd.ErrOrStderr()
+			code, err := a.OpenGuide(f.opt(), "help", !noBrowser)
+			return finish(code, err)
+		},
+	}
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "write the HTML guide without opening a browser")
+	return cmd
 }
 
 func benchmarkCmd(f *flags) *cobra.Command {
@@ -661,7 +852,29 @@ func copybaraCmd(f *flags) *cobra.Command {
 		},
 	}
 	list.Flags().StringVar(&path, "config", "copy.bara.sky", "path to copy.bara.sky")
-	cmd.AddCommand(explain, list)
+	var ref string
+	var dry bool
+	pin := &cobra.Command{
+		Use:   "pin",
+		Short: "Set the origin ref of one workflow in copy.bara.sky",
+		Long: `Edits the ref of the workflow's origin in place and prints the diff. Everything else in the file is kept byte-for-byte.
+
+The origin may be inline or a top-level name, and ref may be a string or a top-level name bound to a string; each is changed where it is defined. A missing ref is added. A computed ref is refused.
+This does not run Copybara. Run copybara migrate yourself after reviewing the change.`,
+		Example: "  evolvectl copybara pin --workflow default --ref v2.0.2\n  evolvectl copybara pin --config third_party/gax/copy.bara.sky --workflow import --ref 3c9b8f1 --dry-run",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.CopybaraPin(f.opt(), path, workflow, ref, dry)
+			return finish(code, err)
+		},
+	}
+	pin.Flags().StringVar(&path, "config", "copy.bara.sky", "path to copy.bara.sky")
+	pin.Flags().StringVar(&workflow, "workflow", "", "workflow name")
+	pin.Flags().StringVar(&ref, "ref", "", "commit, tag, or branch to pin")
+	pin.Flags().BoolVar(&dry, "dry-run", false, "print the diff without writing")
+	cmd.Short = "Inspect copy.bara.sky and pin workflow refs without migrating"
+	cmd.AddCommand(explain, list, pin)
 	return cmd
 }
 

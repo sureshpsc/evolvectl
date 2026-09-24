@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/evolvectl/evolvectl/internal/apidiff"
 	"github.com/evolvectl/evolvectl/internal/commandadapt"
 	"github.com/evolvectl/evolvectl/internal/config"
 	"github.com/evolvectl/evolvectl/internal/diagnostics"
@@ -23,6 +24,7 @@ import (
 	"github.com/evolvectl/evolvectl/internal/fsio"
 	"github.com/evolvectl/evolvectl/internal/idgen"
 	"github.com/evolvectl/evolvectl/internal/manifest"
+	"github.com/evolvectl/evolvectl/internal/modmove"
 	"github.com/evolvectl/evolvectl/internal/patch"
 	"github.com/evolvectl/evolvectl/internal/planner"
 	"github.com/evolvectl/evolvectl/internal/policy"
@@ -44,6 +46,8 @@ type Request struct {
 	Workspace      string
 	Dependency     string
 	To             string
+	ToModule       string
+	VendorDir      string
 	DryRun         bool
 	NoAI           bool
 	Offline        bool
@@ -70,6 +74,8 @@ type runCtx struct {
 	workRoot string
 	seq      int64
 	origRoot string
+	pristine map[string][]byte
+	vendored bool
 }
 
 // Run executes or resumes a campaign.
@@ -121,6 +127,8 @@ func (e *Executor) Run(ctx context.Context, req Request) (*domain.RunReport, err
 		rc.report.EnsureStages()
 		rc.report.Target = planner.ParseTarget(req.Dependency, "")
 		rc.report.Target.To = req.To
+		rc.report.Target.ToModule = req.ToModule
+		rc.report.Target.VendorDir = filepath.ToSlash(req.VendorDir)
 	}
 	err = e.loop(ctx, rc)
 	if err != nil && !errors.Is(err, ErrInterrupted) {
@@ -305,7 +313,7 @@ func (e *Executor) assess(_ context.Context, rc *runCtx) error {
 	return nil
 }
 
-func (e *Executor) plan(_ context.Context, rc *runCtx) error {
+func (e *Executor) plan(ctx context.Context, rc *runCtx) error {
 	target := rc.report.Target
 	if target.Ecosystem == "" {
 		target.Ecosystem = inferEcosystem(rc.report.Inventory, target.Name)
@@ -334,7 +342,54 @@ func (e *Executor) plan(_ context.Context, rc *runCtx) error {
 		rc.report.Checkpoint.FileHashes[f] = sum
 	}
 	rc.report.Checkpoint.Stage = "plan"
+	if target.Ecosystem == "go" {
+		rc.report.Impact = e.impact(ctx, rc)
+		if imp := rc.report.Impact; imp != nil && len(imp.Sites) > 0 {
+			p.ReviewPoints = append(p.ReviewPoints, fmt.Sprintf("%d reference(s) in %d file(s) use API that was removed or changed between %s and %s", len(imp.Sites), imp.FilesAffected, imp.From, imp.To))
+		}
+	}
 	return nil
+}
+
+// impact compares the exported API of the current and target versions. It never fails the plan.
+func (e *Executor) impact(ctx context.Context, rc *runCtx) *domain.Impact {
+	p := rc.report.Plan
+	t := rc.report.Target
+	to := normalizeTarget("go", t.To)
+	imp := &domain.Impact{Module: t.Name, ToModule: t.Module(), To: to, Status: "unavailable"}
+	if len(p.CurrentVersions) == 0 {
+		imp.Reason = "no current version recorded"
+		return imp
+	}
+	imp.From = p.CurrentVersions[0]
+	if len(p.CurrentVersions) > 1 {
+		imp.Note = "manifests declare several versions; compared from " + imp.From
+	}
+	mods := goModFiles(rc)
+	if len(mods) == 0 {
+		imp.Reason = "no go.mod in the plan"
+		return imp
+	}
+	gomod := filepath.Join(rc.origRoot, filepath.FromSlash(mods[0]))
+	before, err := apidiff.Source(ctx, gomod, t.Name, imp.From, rc.req.Offline)
+	if err != nil {
+		imp.Reason = err.Error()
+		return imp
+	}
+	after, err := apidiff.Source(ctx, gomod, t.Module(), to, rc.req.Offline)
+	if err != nil {
+		imp.Reason = err.Error()
+		return imp
+	}
+	if filepath.Clean(before) == filepath.Clean(after) {
+		imp.Reason = "both versions resolve to the same local directory"
+		return imp
+	}
+	built := apidiff.Build(rc.origRoot, p.Files, t.Name, imp.From, t.Module(), to, before, after)
+	if imp.Note != "" {
+		built.Note = imp.Note + ". " + built.Note
+	}
+	return built
 }
 
 func (e *Executor) prepare(ctx context.Context, rc *runCtx) error {
@@ -398,13 +453,46 @@ func (e *Executor) mutate(ctx context.Context, rc *runCtx) error {
 	if !rc.req.DryRun {
 		e.snapshotManifests(rc)
 	}
-	changes, err := manifest.Bump(rc.workRoot, rc.report.Inventory, target.Ecosystem, target.Name, target.To)
-	if err != nil {
-		rc.report.Outcome = domain.OutcomeFailed
+	e.capturePristine(rc)
+	var changes []domain.Change
+	if moving(target) {
+		if err := e.moveRequires(rc); err != nil {
+			return err
+		}
+	} else {
+		bumped, err := manifest.Bump(rc.workRoot, rc.report.Inventory, target.Ecosystem, target.Name, target.To)
+		if err != nil {
+			rc.report.Outcome = domain.OutcomeFailed
+			return err
+		}
+		if target.Ecosystem != "go" {
+			changes = append(changes, bumped...)
+		}
+	}
+	if target.VendorDir != "" {
+		if err := e.vendorModule(ctx, rc, &changes); err != nil {
+			return err
+		}
+	}
+	if moving(target) {
+		if err := e.rewriteMovedImports(rc, &changes); err != nil {
+			return err
+		}
+	}
+	if err := e.syncGoSums(ctx, rc); err != nil {
 		return err
 	}
-	if err := e.syncGoSums(ctx, rc, &changes); err != nil {
-		return err
+	if target.Ecosystem == "go" {
+		reason := fmt.Sprintf("set %s to %s", target.Name, target.To)
+		if moving(target) {
+			reason = fmt.Sprintf("moved %s to %s %s", target.Name, target.ToModule, target.To)
+		}
+		if target.VendorDir != "" {
+			reason += "; replace " + target.Module() + " => " + target.VendorDir
+		}
+		if err := e.recordManifests(rc, &changes, reason); err != nil {
+			return err
+		}
 	}
 	vc := recipe.VersionContext{Ecosystem: target.Ecosystem, Name: target.Name, Target: normalizeTarget(target.Ecosystem, target.To)}
 	if len(rc.report.Plan.CurrentVersions) > 0 {
@@ -568,6 +656,9 @@ func (e *Executor) runValidations(ctx context.Context, rc *runCtx, final bool) e
 		reason = "no manifest recorded"
 	}
 	rc.report.Validations = append(rc.report.Validations, gate("manifest-target", strings.Join(mans, ","), status, true, nil, 0, reason))
+	if moving(target) {
+		rc.report.Validations = append(rc.report.Validations, e.moveGate(rc))
+	}
 	switch target.Ecosystem {
 	case "go":
 		e.goTest(ctx, rc)
@@ -617,6 +708,28 @@ func (e *Executor) runValidations(ctx context.Context, rc *runCtx, final bool) e
 	}
 	rc.report.Groups = diagnostics.Group(rc.report.Diagnostics)
 	return nil
+}
+
+// moveGate lists planned files that still import the old module path.
+func (e *Executor) moveGate(rc *runCtx) domain.ValidationResult {
+	t := rc.report.Target
+	var left []string
+	for _, rel := range rc.report.Plan.Files {
+		if !strings.HasSuffix(rel, ".go") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(rc.workRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			continue
+		}
+		if _, n, err := modmove.RewriteImports(rel, body, t.Name, t.ToModule); err == nil && n > 0 {
+			left = append(left, rel)
+		}
+	}
+	if len(left) == 0 {
+		return gate("module-move", t.Name+" -> "+t.ToModule, domain.GatePass, true, nil, 0, "no planned file imports "+t.Name)
+	}
+	return gate("module-move", t.Name+" -> "+t.ToModule, domain.GateFail, true, nil, 0, "still importing "+t.Name+": "+strings.Join(left, ", "))
 }
 
 func (e *Executor) goTest(ctx context.Context, rc *runCtx) {
@@ -725,26 +838,45 @@ func Rollback(workspace, runID string) error {
 		return err
 	}
 	snap := filepath.Join(workspace, ".evolvectl", "snapshots", runID)
+	// A file can carry several changes (an import move, then a recipe). The first change holds
+	// the original hash and the last one holds the bytes the campaign left on disk.
+	var order []string
+	first := map[string]domain.Change{}
+	last := map[string]domain.Change{}
 	for _, ch := range rep.Changes {
-		cur := filepath.Join(workspace, filepath.FromSlash(ch.File))
-		src := filepath.Join(snap, filepath.FromSlash(ch.File))
-		body, err := os.ReadFile(src)
+		if _, ok := first[ch.File]; !ok {
+			first[ch.File] = ch
+			order = append(order, ch.File)
+		}
+		last[ch.File] = ch
+	}
+	for _, file := range order {
+		ch := last[file]
+		ch.BeforeHash = first[file].BeforeHash
+		if ch.Kind == "vendor-tree" {
+			if err := restoreTree(workspace, runID, ch); err != nil {
+				return err
+			}
+			continue
+		}
+		cur := filepath.Join(workspace, filepath.FromSlash(file))
+		body, err := os.ReadFile(filepath.Join(snap, filepath.FromSlash(file)))
 		if err != nil {
-			if os.IsNotExist(err) && ch.BeforeHash == "" {
-				now, rerr := os.ReadFile(cur)
-				if os.IsNotExist(rerr) {
-					continue
-				}
-				if rerr != nil {
-					return rerr
-				}
-				if fsio.HashBytes(now) != ch.AfterHash {
-					return fmt.Errorf("refusing to roll back %s: file changed after the campaign", ch.File)
-				}
-				if err := os.Remove(cur); err != nil {
-					return err
-				}
+			if !os.IsNotExist(err) || ch.BeforeHash != "" {
 				continue
+			}
+			now, rerr := os.ReadFile(cur)
+			if os.IsNotExist(rerr) {
+				continue
+			}
+			if rerr != nil {
+				return rerr
+			}
+			if fsio.HashBytes(now) != ch.AfterHash {
+				return fmt.Errorf("refusing to roll back %s: file changed after the campaign", file)
+			}
+			if err := os.Remove(cur); err != nil {
+				return err
 			}
 			continue
 		}
@@ -753,7 +885,7 @@ func Rollback(workspace, runID string) error {
 			return err
 		}
 		if fsio.HashBytes(now) != ch.AfterHash {
-			return fmt.Errorf("refusing to roll back %s: file changed after the campaign", ch.File)
+			return fmt.Errorf("refusing to roll back %s: file changed after the campaign", file)
 		}
 		if err := fsio.WriteAtomic(cur, body, 0o644); err != nil {
 			return err

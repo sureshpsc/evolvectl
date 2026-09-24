@@ -8,6 +8,7 @@ var docTopics = map[string]string{
 4. evolvectl upgrade <dependency> --to <version>
 5. evolvectl report --run <id> --format html
 
+init opens the HTML guide in .evolvectl/guide. evolvectl help opens the command page.
 Source stays local. AI is off unless you enable it. --no-ai forces the deterministic path.
 Upgrade writes the workspace unless you pass --dry-run.`,
 	"providers": `Providers
@@ -32,11 +33,18 @@ examples/java-maven-command-adapter
 examples/node-pnpm-command-adapter
 examples/mixed-monorepo
 examples/custom-tool-plugin`,
+	"languages": `Languages
+Go has AST recipes and runs go test when go is installed.
+Python has structural recipes. pytest runs when it is installed.
+Maven and Node can edit manifest versions. Source repair is unavailable, so those runs need review.
+Bazel files are recorded. bazel test runs only when you configure that command.
+  evolvectl adapters
+  evolvectl docs languages --format html`,
 	"troubleshooting": `Troubleshooting
 COPYBARA_NOT_FOUND: install Copybara or select git.
 Dirty worktree: commit, stash, or pass --allow-dirty. Dry-run does not require a clean tree.
 Stale plan: files changed after planning. Run plan again.
-registry_unavailable is not a claim that a package is current.`,
+registry_unavailable means no registry was queried. The declared version is what the report shows.`,
 	"ui": `Local UI
 evolvectl ui serve --host 127.0.0.1 --port 0
 The server is read-only, binds loopback only, and reads runs already stored under .evolvectl.

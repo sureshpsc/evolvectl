@@ -11,3 +11,5 @@ Language recipes, manifest edits, and command adapters are capabilities. The cam
 `--offline` keeps `go test` from using a module proxy. A Go upgrade that is not a local `replace` also refuses to continue offline when `go.sum` does not already contain the target version. Without `--offline`, the campaign runs `go get <module>@<version>` so `go.sum` matches the bump. `evolvectl rollback --run <id>` restores the snapshotted files. A dry-run stops with a named error when a `replace` points outside the workspace. `go.work` `use` entries are listed as workspace modules. `copybara explain` substitutes top-level `name = "literal"` assignments and does not execute Starlark.
 
 Registry status for `outdated` stays `registry_unavailable` until a snapshot is supplied. Python runs pytest when test files exist and pytest is installed. Coverage.py is used when it is installed. Command adapters do not invent coverage.
+
+`evolvectl init` writes an offline HTML guide to `.evolvectl/guide/` and opens `index.html`. `evolvectl help` opens the command reference. `evolvectl docs <topic> --format html` opens that topic. The pages load no remote assets.

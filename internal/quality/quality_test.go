@@ -43,6 +43,26 @@ func TestParseGoTestAndDiff(t *testing.T) {
 	}
 }
 
+func TestParseGoTestPaddedOK(t *testing.T) {
+	text := "=== RUN   TestRecognize\n" +
+		"--- PASS: TestRecognize (0.00s)\n" +
+		"=== RUN   TestTable\n" +
+		"=== RUN   TestTable/one\n" +
+		"--- PASS: TestTable (0.00s)\n" +
+		"    --- PASS: TestTable/one (0.00s)\n" +
+		"PASS\n" +
+		"coverage: 66.7% of statements\n" +
+		"ok  \texample.com/speech/speech\t0.426s\tcoverage: 66.7% of statements\n" +
+		"?   \texample.com/speech/cmd\t[no test files]\n"
+	samples, fails, passed := ParseGoTest(text)
+	if passed != 2 || len(fails) != 0 {
+		t.Fatalf("passed %d fails %+v", passed, fails)
+	}
+	if len(samples) != 1 || samples[0].Scope != "example.com/speech/speech" || samples[0].Percent != 66.7 {
+		t.Fatalf("samples %+v", samples)
+	}
+}
+
 func TestBuildFailureAndCoverTotal(t *testing.T) {
 	_, fails, passed := ParseGoTest("FAIL\texample.com/pay\t[build failed]\n")
 	if passed != 0 || len(fails) != 1 || fails[0].Name != "(build)" {

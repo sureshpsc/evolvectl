@@ -119,9 +119,9 @@ func ParseGoTest(text string) (samples []domain.CoverageSample, fails []domain.T
 				continue
 			}
 			pending = append(pending, domain.TestRef{Name: name, Status: status})
-		case strings.HasPrefix(line, "ok\t"), strings.HasPrefix(line, "FAIL\t"), strings.HasPrefix(line, "?\t"):
+		case packageLine(line):
 			parts := strings.Split(line, "\t")
-			kind := parts[0]
+			kind := strings.TrimSpace(parts[0])
 			pkg := ""
 			if len(parts) > 1 {
 				pkg = strings.TrimSpace(parts[1])
@@ -141,6 +141,20 @@ func ParseGoTest(text string) (samples []domain.CoverageSample, fails []domain.T
 		}
 	}
 	return samples, fails, passed
+}
+
+// packageLine matches go test's per-package result, which pads "ok" and "?" with spaces
+// before the tab: "ok  \tpkg", "FAIL\tpkg", "?   \tpkg".
+func packageLine(line string) bool {
+	head, _, ok := strings.Cut(line, "\t")
+	if !ok {
+		return false
+	}
+	switch strings.TrimRight(head, " ") {
+	case "ok", "FAIL", "?":
+		return true
+	}
+	return false
 }
 
 // ParseCoverFunc reads the total line from `go tool cover -func`.

@@ -40,7 +40,7 @@ func (e *Executor) runGoSuite(ctx context.Context, rc *runCtx, phase string, gat
 	}
 	for i, dir := range dirs {
 		profileAbs, profileRel := coverageProfile(rc, phase, i)
-		argv := []string{goBin, "test", "-count=1", "-cover", "-coverprofile", profileAbs, "./..."}
+		argv := []string{goBin, "test", "-count=1", "-v", "-cover", "-coverprofile", profileAbs, "./..."}
 		run := runner.Run(ctx, runner.Request{Argv: argv, Dir: dir, Timeout: 3 * time.Minute, Env: moduleEnv(rc)})
 		combined := run.Stdout + "\n" + run.Stderr
 		samples, fails, passed := quality.ParseGoTest(combined)

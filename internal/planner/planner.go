@@ -12,6 +12,7 @@ import (
 	"github.com/evolvectl/evolvectl/internal/graph"
 	"github.com/evolvectl/evolvectl/internal/idgen"
 	"github.com/evolvectl/evolvectl/internal/manifest"
+	"github.com/evolvectl/evolvectl/internal/modmove"
 	"github.com/evolvectl/evolvectl/internal/recipe"
 )
 
@@ -151,10 +152,28 @@ func Build(req Request) (*domain.Plan, error) {
 			}
 		}
 	}
+	if req.Target.Ecosystem == "go" {
+		if req.Target.ToModule != "" && req.Target.ToModule != req.Target.Name {
+			plan.ReviewPoints = append(plan.ReviewPoints, fmt.Sprintf("imports move from %s to %s in %d file(s); package identifiers are unchanged, so a renamed package shows up as a compile error", req.Target.Name, req.Target.ToModule, len(files)))
+		} else if s := modmove.SuggestMajorPath(req.Target.Name, req.Target.To); s != "" {
+			plan.ReviewPoints = append(plan.ReviewPoints, fmt.Sprintf("%s on %s resolves as +incompatible because the path has no /vN suffix; if the project publishes %s, pass --to-module %s", req.Target.To, req.Target.Name, s, s))
+		}
+		if req.Target.VendorDir != "" {
+			plan.ReviewPoints = append(plan.ReviewPoints, fmt.Sprintf("module source is copied into %s and wired with a replace directive; review the license and the vendored diff", req.Target.VendorDir))
+		}
+	}
 	plan.CapabilityNotes = capabilityNotes(req.Target.Ecosystem)
 	order := 1
 	plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-manifest", Order: order, Action: "update manifest declaration", Target: strings.Join(mans, ", "), Capability: "dependencies.upgrade", Support: supportFor(req.Target.Ecosystem)})
 	order++
+	if req.Target.VendorDir != "" {
+		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-vendor", Order: order, Action: "copy " + req.Target.Module() + "@" + req.Target.To + " into " + req.Target.VendorDir + " and add a replace", Target: req.Target.VendorDir, Capability: "dependencies.vendor", Support: domain.SupportNative})
+		order++
+	}
+	if req.Target.ToModule != "" && req.Target.ToModule != req.Target.Name {
+		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-move", Order: order, Action: "rewrite imports " + req.Target.Name + " -> " + req.Target.ToModule, Target: fmt.Sprintf("%d file(s)", len(files)), Capability: "module.move", Support: domain.SupportNative})
+		order++
+	}
 	if len(recipeIDs) > 0 {
 		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-recipes", Order: order, Action: "apply deterministic recipes", Target: strings.Join(recipeIDs, ", "), Capability: "transform.apply", Support: domain.SupportNative})
 		order++
@@ -163,7 +182,7 @@ func Build(req Request) (*domain.Plan, error) {
 		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-" + v, Order: order, Action: "validate", Target: v, Capability: "validate.run", Support: domain.SupportNative})
 		order++
 	}
-	plan.Hash = idgen.Short(16, plan.Target.Ecosystem, plan.Target.Name, plan.Target.To, strings.Join(plan.Manifests, ","), strings.Join(plan.Files, ","), strings.Join(plan.Recipes, ","))
+	plan.Hash = idgen.Short(16, plan.Target.Ecosystem, plan.Target.Name, plan.Target.To, plan.Target.ToModule, plan.Target.VendorDir, strings.Join(plan.Manifests, ","), strings.Join(plan.Files, ","), strings.Join(plan.Recipes, ","))
 	return plan, nil
 }
 

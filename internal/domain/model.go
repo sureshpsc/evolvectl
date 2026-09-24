@@ -138,12 +138,110 @@ type Inventory struct {
 	BaselineRevision  string       `json:"baseline_revision,omitempty"`
 }
 
-// Target is the requested upgrade coordinate.
+// Target is the requested upgrade coordinate. ToModule is set when the module path changes,
+// as in a /vN major-version move or a rename. VendorDir is set when the module source is
+// copied into the workspace and wired with a replace directive.
 type Target struct {
 	Ecosystem string `json:"ecosystem"`
 	Name      string `json:"name"`
 	To        string `json:"to"`
 	Raw       string `json:"raw,omitempty"`
+	ToModule  string `json:"to_module,omitempty"`
+	VendorDir string `json:"vendor_dir,omitempty"`
+}
+
+// Module is the module path the workspace should require after the run.
+func (t Target) Module() string {
+	if t.ToModule != "" {
+		return t.ToModule
+	}
+	return t.Name
+}
+
+// APIChange is one exported symbol that differs between two versions of a module.
+type APIChange struct {
+	Package string `json:"package"`
+	Symbol  string `json:"symbol"`
+	Kind    string `json:"kind"`
+	Change  string `json:"change"`
+	Before  string `json:"before,omitempty"`
+	After   string `json:"after,omitempty"`
+}
+
+// CallSite is one workspace reference to a removed or changed symbol.
+type CallSite struct {
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Column  int    `json:"column"`
+	Package string `json:"package"`
+	Symbol  string `json:"symbol"`
+	Change  string `json:"change"`
+}
+
+// Impact is a syntactic comparison of the exported API of two module versions, plus
+// the workspace references that touch removed or changed symbols. It is not type-checked.
+type Impact struct {
+	Module         string      `json:"module"`
+	From           string      `json:"from"`
+	ToModule       string      `json:"to_module"`
+	To             string      `json:"to"`
+	Status         string      `json:"status"`
+	Reason         string      `json:"reason,omitempty"`
+	Removed        int         `json:"removed"`
+	Changed        int         `json:"changed"`
+	Added          int         `json:"added"`
+	Changes        []APIChange `json:"changes"`
+	Sites          []CallSite  `json:"sites"`
+	FilesAffected  int         `json:"files_affected"`
+	MethodsChanged int         `json:"methods_changed"`
+	Note           string      `json:"note,omitempty"`
+}
+
+// SCMResult records the branch, commit, and pull request created after a run.
+type SCMResult struct {
+	Branch string `json:"branch,omitempty"`
+	Base   string `json:"base,omitempty"`
+	Commit string `json:"commit,omitempty"`
+	Pushed bool   `json:"pushed"`
+	PRURL  string `json:"pr_url,omitempty"`
+	Draft  bool   `json:"draft"`
+	Note   string `json:"note,omitempty"`
+}
+
+// BatchRow is one upgrade in a batch file and the run that executed it.
+type BatchRow struct {
+	Index          int    `json:"index"`
+	Dependency     string `json:"dependency"`
+	To             string `json:"to"`
+	ToModule       string `json:"to_module,omitempty"`
+	Workspace      string `json:"workspace,omitempty"`
+	Owner          string `json:"owner,omitempty"`
+	RunID          string `json:"run_id,omitempty"`
+	Outcome        string `json:"outcome"`
+	Reason         string `json:"reason,omitempty"`
+	ExitCode       int    `json:"exit_code"`
+	Changes        int    `json:"changes"`
+	NewlyFailed    int    `json:"newly_failed"`
+	CoverageBefore string `json:"coverage_before,omitempty"`
+	CoverageAfter  string `json:"coverage_after,omitempty"`
+	ImpactSites    int    `json:"impact_sites"`
+	Branch         string `json:"branch,omitempty"`
+	PRURL          string `json:"pr_url,omitempty"`
+	Report         string `json:"report,omitempty"`
+}
+
+// BatchReport is the combined record of one batch invocation.
+type BatchReport struct {
+	SchemaVersion string     `json:"schema_version"`
+	ID            string     `json:"id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Source        string     `json:"source"`
+	Mode          string     `json:"mode"`
+	WorkspaceRoot string     `json:"workspace_root"`
+	Rows          []BatchRow `json:"rows"`
+	Succeeded     int        `json:"succeeded"`
+	NeedsReview   int        `json:"needs_review"`
+	Failed        int        `json:"failed"`
 }
 
 // PlanStep is one ordered campaign action.
@@ -448,6 +546,8 @@ type RunReport struct {
 	Iterations       []Iteration        `json:"iterations"`
 	Validations      []ValidationResult `json:"validations"`
 	Quality          *Quality           `json:"quality,omitempty"`
+	Impact           *Impact            `json:"impact,omitempty"`
+	SCM              *SCMResult         `json:"scm,omitempty"`
 	PolicyDecisions  []PolicyDecision   `json:"policy_decisions"`
 	Capabilities     []Capability       `json:"capabilities"`
 	Tools            []ToolFingerprint  `json:"tools"`
