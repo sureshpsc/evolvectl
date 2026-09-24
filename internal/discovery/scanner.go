@@ -142,7 +142,17 @@ func Scan(ctx context.Context, root string, opt Options) (domain.Inventory, erro
 			inv.Dependencies = append(inv.Dependencies, deps...)
 		case "go.work":
 			inv.RepoType = "monorepo"
-			inv.Warnings = append(inv.Warnings, "go.work detected at "+rel)
+			uses, err := parseGoWork(rel, body)
+			if err != nil {
+				inv.Warnings = append(inv.Warnings, rel+": "+err.Error())
+			}
+			for _, u := range uses {
+				inv.WorkspaceModules = appendUnique(inv.WorkspaceModules, u)
+				if strings.HasPrefix(u, "../") || u == ".." {
+					inv.Warnings = append(inv.Warnings, "go.work use "+u+" is outside the scan root")
+				}
+			}
+			inv.Warnings = append(inv.Warnings, "go.work modules: "+strings.Join(uses, ", "))
 		case "pyproject.toml":
 			p := ensureProject(projects, filepath.Dir(rel), "python", "pyproject")
 			p.Manifests = appendUnique(p.Manifests, rel)
@@ -413,6 +423,24 @@ func addBuild(inv *domain.Inventory, name string) {
 		}
 	}
 	inv.BuildSystems = append(inv.BuildSystems, name)
+}
+
+func parseGoWork(rel string, body []byte) ([]string, error) {
+	f, err := modfile.ParseWork(rel, body, nil)
+	if err != nil {
+		return nil, err
+	}
+	base := filepath.Dir(filepath.FromSlash(rel))
+	var out []string
+	for _, u := range f.Use {
+		p := filepath.ToSlash(filepath.Clean(filepath.Join(base, u.Path)))
+		if p == "." {
+			p = "."
+		}
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func parseGoMod(rel, projectID string, body []byte) ([]domain.Dependency, error) {

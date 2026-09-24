@@ -134,6 +134,7 @@ Exit codes: 0 success, 2 bad arguments, 5 validation failed, 6 needs review, 7 p
 		explainCmd(&f),
 		diffCmd(&f),
 		historyCmd(&f),
+		rollbackCmd(&f),
 		reportCmd(&f),
 		recipeCmd(&f),
 		adaptersCmd(&f),
@@ -385,6 +386,24 @@ func diffCmd(f *flags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&id, "run", "", "run id")
+	return cmd
+}
+
+func rollbackCmd(f *flags) *cobra.Command {
+	var id string
+	cmd := &cobra.Command{
+		Use:     "rollback",
+		Short:   "Restore files snapshotted by a run",
+		Long:    "Restores each snapshotted file when its current bytes still match the campaign. Files created by the run, such as a new go.sum, are removed.",
+		Example: "  evolvectl rollback --run <id>",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.Rollback(f.opt(), id)
+			return finish(code, err)
+		},
+	}
+	cmd.Flags().StringVar(&id, "run", "", "run id (default: latest)")
 	return cmd
 }
 

@@ -8,4 +8,6 @@ Prepare runs the existing tests and coverage before any edit. Validate runs the 
 
 Language recipes, manifest edits, and command adapters are capabilities. The campaign does not branch on Copybara. `copybara explain` is a separate static read of `copy.bara.sky`.
 
-`--offline` keeps `go test` from using a module proxy. Without it, Go may download the module it is upgrading. Registry status for `outdated` stays `registry_unavailable` until a snapshot is supplied. Python runs pytest when test files exist and pytest is installed. Coverage.py is used when it is installed. Command adapters do not invent coverage.
+`--offline` keeps `go test` from using a module proxy. A Go upgrade that is not a local `replace` also refuses to continue offline when `go.sum` does not already contain the target version. Without `--offline`, the campaign runs `go get <module>@<version>` so `go.sum` matches the bump. `evolvectl rollback --run <id>` restores the snapshotted files. A dry-run stops with a named error when a `replace` points outside the workspace. `go.work` `use` entries are listed as workspace modules. `copybara explain` substitutes top-level `name = "literal"` assignments and does not execute Starlark.
+
+Registry status for `outdated` stays `registry_unavailable` until a snapshot is supplied. Python runs pytest when test files exist and pytest is installed. Coverage.py is used when it is installed. Command adapters do not invent coverage.

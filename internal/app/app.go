@@ -438,6 +438,23 @@ func (a *App) History(opt Option) (int, error) {
 	return exitcode.Success, nil
 }
 
+// Rollback restores snapshotted files from a saved run.
+func (a *App) Rollback(opt Option, id string) (int, error) {
+	dir := a.dir(opt)
+	if id == "" {
+		rep, err := a.latest(opt, "")
+		if err != nil {
+			return exitcode.Invalid, err
+		}
+		id = rep.ID
+	}
+	if err := campaign.Rollback(dir, id); err != nil {
+		return exitcode.Generic, err
+	}
+	fmt.Fprintf(a.Out, "Restored snapshotted files for %s\n", id)
+	return exitcode.Success, nil
+}
+
 // Explain prints provenance for a path or change id.
 func (a *App) Explain(opt Option, runID, target string) (int, error) {
 	rep, err := a.latest(opt, runID)

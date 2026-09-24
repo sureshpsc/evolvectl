@@ -350,16 +350,22 @@ func (e *Executor) prepare(ctx context.Context, rc *runCtx) error {
 		rc.report.PolicyDecisions = append(rc.report.PolicyDecisions, domain.PolicyDecision{
 			ID: idgen.New("pol_"), Action: "dry-run", Allowed: true, Reason: "changes are applied only in a temporary copy",
 		})
+		if msg, ok := externalReplaceBlock(rc.origRoot, rc.report.Inventory); !ok {
+			rc.report.Outcome = domain.OutcomeBlocked
+			rc.report.NextStep = "run upgrade without --dry-run; the replace target is outside this workspace"
+			rc.report.ManualReview = appendUnique(rc.report.ManualReview, msg)
+			return fmt.Errorf("%s", msg)
+		}
 	}
 	e.captureBaseline(ctx, rc)
 	return nil
 }
 
-func (e *Executor) apply(_ context.Context, rc *runCtx) error {
+func (e *Executor) apply(ctx context.Context, rc *runCtx) error {
 	if err := checkStale(rc); err != nil {
 		return err
 	}
-	return e.mutate(rc)
+	return e.mutate(ctx, rc)
 }
 
 func checkStale(rc *runCtx) error {
@@ -384,11 +390,20 @@ func checkStale(rc *runCtx) error {
 	return nil
 }
 
-func (e *Executor) mutate(rc *runCtx) error {
+func (e *Executor) mutate(ctx context.Context, rc *runCtx) error {
 	target := rc.report.Target
+	if err := e.rejectMissingSums(rc); err != nil {
+		return err
+	}
+	if !rc.req.DryRun {
+		e.snapshotManifests(rc)
+	}
 	changes, err := manifest.Bump(rc.workRoot, rc.report.Inventory, target.Ecosystem, target.Name, target.To)
 	if err != nil {
 		rc.report.Outcome = domain.OutcomeFailed
+		return err
+	}
+	if err := e.syncGoSums(ctx, rc, &changes); err != nil {
 		return err
 	}
 	vc := recipe.VersionContext{Ecosystem: target.Ecosystem, Name: target.Name, Target: normalizeTarget(target.Ecosystem, target.To)}
@@ -457,7 +472,7 @@ func (e *Executor) repair(ctx context.Context, rc *runCtx) error {
 	}
 	_, err := repair.Loop(rc.req.MaxIterations, func(iteration int) (repair.Step, error) {
 		before := len(rc.report.Changes)
-		if err := e.mutate(rc); err != nil {
+		if err := e.mutate(ctx, rc); err != nil {
 			return repair.Step{}, err
 		}
 		applied := len(rc.report.Changes) - before
@@ -711,12 +726,28 @@ func Rollback(workspace, runID string) error {
 	}
 	snap := filepath.Join(workspace, ".evolvectl", "snapshots", runID)
 	for _, ch := range rep.Changes {
+		cur := filepath.Join(workspace, filepath.FromSlash(ch.File))
 		src := filepath.Join(snap, filepath.FromSlash(ch.File))
 		body, err := os.ReadFile(src)
 		if err != nil {
+			if os.IsNotExist(err) && ch.BeforeHash == "" {
+				now, rerr := os.ReadFile(cur)
+				if os.IsNotExist(rerr) {
+					continue
+				}
+				if rerr != nil {
+					return rerr
+				}
+				if fsio.HashBytes(now) != ch.AfterHash {
+					return fmt.Errorf("refusing to roll back %s: file changed after the campaign", ch.File)
+				}
+				if err := os.Remove(cur); err != nil {
+					return err
+				}
+				continue
+			}
 			continue
 		}
-		cur := filepath.Join(workspace, filepath.FromSlash(ch.File))
 		now, err := os.ReadFile(cur)
 		if err != nil {
 			return err
@@ -729,6 +760,24 @@ func Rollback(workspace, runID string) error {
 		}
 	}
 	return nil
+}
+
+func (e *Executor) snapshotManifests(rc *runCtx) {
+	if rc.report.Plan == nil {
+		return
+	}
+	for _, rel := range rc.report.Plan.Manifests {
+		abs := filepath.Join(rc.origRoot, filepath.FromSlash(rel))
+		body, err := os.ReadFile(abs)
+		if err != nil {
+			continue
+		}
+		_ = snapshot(rc.origRoot, rc.report.ID, rel, body)
+		sumRel := fsio.RelSlash(rc.origRoot, filepath.Join(filepath.Dir(abs), "go.sum"))
+		if sum, err := os.ReadFile(filepath.Join(rc.origRoot, filepath.FromSlash(sumRel))); err == nil {
+			_ = snapshot(rc.origRoot, rc.report.ID, sumRel, sum)
+		}
+	}
 }
 
 func decideOutcome(r *domain.RunReport) {

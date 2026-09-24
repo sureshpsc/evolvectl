@@ -11,6 +11,7 @@ import (
 	"github.com/evolvectl/evolvectl/internal/domain"
 	"github.com/evolvectl/evolvectl/internal/graph"
 	"github.com/evolvectl/evolvectl/internal/idgen"
+	"github.com/evolvectl/evolvectl/internal/manifest"
 	"github.com/evolvectl/evolvectl/internal/recipe"
 )
 
@@ -135,6 +136,20 @@ func Build(req Request) (*domain.Plan, error) {
 	}
 	if req.Target.Ecosystem == "maven" || req.Target.Ecosystem == "node" {
 		plan.ReviewPoints = append(plan.ReviewPoints, "review the manifest change; no semantic codemod is available for this ecosystem")
+	}
+	if len(req.Inventory.WorkspaceModules) > 0 {
+		plan.ReviewPoints = append(plan.ReviewPoints, "go.work modules: "+strings.Join(req.Inventory.WorkspaceModules, ", "))
+	}
+	if req.Target.Ecosystem == "go" {
+		var mans []string
+		for _, m := range req.Inventory.Manifests {
+			mans = append(mans, m.Path)
+		}
+		if reps, err := manifest.ExternalReplaces(req.Root, mans); err == nil {
+			for _, r := range reps {
+				plan.ReviewPoints = append(plan.ReviewPoints, manifest.FormatExternalReplace(r))
+			}
+		}
 	}
 	plan.CapabilityNotes = capabilityNotes(req.Target.Ecosystem)
 	order := 1

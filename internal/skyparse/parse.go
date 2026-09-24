@@ -21,6 +21,7 @@ type FileExplanation struct {
 
 // Parse extracts workflow structure from source.
 func Parse(path, src string) FileExplanation {
+	src = substituteAssignments(src)
 	var out FileExplanation
 	out.Loads = findLoads(src)
 	bodies := extractCalls(src, "core.workflow")

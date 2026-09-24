@@ -43,6 +43,27 @@ func TestMixedScan(t *testing.T) {
 	}
 }
 
+func TestGoWorkUses(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "modA"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work := "go 1.22\n\nuse ./modA\n"
+	if err := os.WriteFile(filepath.Join(root, "go.work"), []byte(work), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "modA", "go.mod"), []byte("module example.com/moda\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inv, err := Scan(context.Background(), root, Options{Workers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.WorkspaceModules) != 1 || inv.WorkspaceModules[0] != "modA" {
+		t.Fatalf("%+v", inv.WorkspaceModules)
+	}
+}
+
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

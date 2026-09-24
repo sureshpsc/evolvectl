@@ -131,6 +131,7 @@ type Inventory struct {
 	CacheHits         int          `json:"cache_hits"`
 	CacheMisses       int          `json:"cache_misses"`
 	CopybaraConfigs   []string     `json:"copybara_configs"`
+	WorkspaceModules  []string     `json:"workspace_modules,omitempty"`
 	CommandAdapters   []string     `json:"command_adapters"`
 	HasGit            bool         `json:"has_git"`
 	GitDirty          bool         `json:"git_dirty"`

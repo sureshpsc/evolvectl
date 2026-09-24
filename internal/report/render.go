@@ -158,6 +158,12 @@ func InventoryText(inv domain.Inventory) string {
 	for _, w := range inv.BuildSystems {
 		fmt.Fprintf(&b, "  %s\n", w)
 	}
+	if len(inv.WorkspaceModules) > 0 {
+		b.WriteString("Go workspace\n")
+		for _, m := range inv.WorkspaceModules {
+			fmt.Fprintf(&b, "  %s\n", m)
+		}
+	}
 	fmt.Fprintf(&b, "Dependencies         %d\n", len(inv.Dependencies))
 	if len(inv.Warnings) > 0 {
 		b.WriteString("Warnings\n")
@@ -197,6 +203,7 @@ var invTpl = template.Must(template.New("inventory").Funcs(template.FuncMap{
 		return t.UTC().Format(time.RFC3339)
 	},
 	"redact": redact.Text,
+	"join":   strings.Join,
 }).Parse(inventoryPage))
 
 const inventoryPage = `<!DOCTYPE html>
@@ -228,7 +235,9 @@ th, td { border:1px solid var(--line); padding:.35rem .5rem; text-align:left; ve
 <section><h2>Projects</h2>
 <table><thead><tr><th>Language</th><th>Root</th><th>Build</th><th>Manifests</th></tr></thead><tbody>
 {{range .Projects}}<tr><td>{{.Language}}</td><td>{{.Root}}</td><td>{{.Build}}</td><td>{{len .Manifests}}</td></tr>{{end}}
-</tbody></table></section>
+</tbody></table>
+{{if .WorkspaceModules}}<p>go.work modules: {{join .WorkspaceModules ", "}}</p>{{end}}
+</section>
 <section><h2>Dependencies</h2>
 <table><thead><tr><th>Ecosystem</th><th>Name</th><th>Version</th><th>Direct</th><th>Status</th><th>Manifest</th></tr></thead><tbody>
 {{range .Dependencies}}<tr><td>{{.Ecosystem}}</td><td>{{.Name}}</td><td>{{.CurrentVersion}}</td><td>{{.Direct}}</td><td>{{.Status}}</td><td>{{.Manifest}}</td></tr>{{end}}

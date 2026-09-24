@@ -21,6 +21,9 @@ func TestExportWorkflow(t *testing.T) {
 	if wf.Name != "export-go-lib" {
 		t.Fatal(wf.Name)
 	}
+	if !strings.Contains(wf.Origin, "https://github.com/example/source.git") || strings.Contains(wf.Origin, "source_url") {
+		t.Fatalf("origin %s", wf.Origin)
+	}
 	if strings.Contains(wf.Destination, "ghp_") || strings.Contains(wf.Destination, "user:") {
 		t.Fatalf("secret leaked: %s", wf.Destination)
 	}
