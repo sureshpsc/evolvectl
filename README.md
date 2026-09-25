@@ -118,6 +118,23 @@ It skips directories that hold generated or downloaded code: `.git`, `node_modul
 
 Edits stay inside the plan: the manifests that declare the dependency, and the source files that import it. When no file imports it by name, the plan falls back to that project's source files in the same language, and recipes still change only code that matches. `plan` prints the count before anything is written, and `plan --format json` lists every file.
 
+### Large repositories
+
+These settings in `.evolvectl.yaml` control speed on big trees:
+
+```yaml
+validation:
+  test_timeout: 10m      # limit for one module's go test; --test-timeout overrides
+  test_cache: false      # true reuses go test results for unchanged packages; --test-cache overrides
+execution:
+  validator_workers: 4   # modules whose tests run at the same time
+  dry_run_copy: auto     # auto, worktree, or copy
+```
+
+- Only the modules in the plan are tested, not every go.mod in the tree. Up to `validator_workers` of them run at once, and results are reported in plan order.
+- With `dry_run_copy: auto`, a dry run on a clean git workspace checks out HEAD into a temporary `git worktree` instead of copying every file. The worktree is removed when the run ends. If the workspace has uncommitted or untracked files, it falls back to a full copy so those files are included. Files ignored by git are not in a worktree, so set `copy` if the build needs generated files that git ignores. `worktree` fails instead of falling back.
+- `scan` caches file hashes, so a second scan reads only changed files.
+
 ## Providers and adapters
 
 The campaign stages stay the same for every workspace. Three slots change:
@@ -199,7 +216,7 @@ evolvectl upgrade google.golang.org/grpc --to v1.75.0 --no-ai --workspace exampl
 evolvectl report --run <id> --format html --output report.html
 ```
 
-`upgrade` writes the workspace. `--dry-run` applies the same steps in a temporary copy and leaves the original source unchanged. AI stays off unless you enable it in `.evolvectl.yaml`. `--no-ai` forces the deterministic path for that command.
+`upgrade` writes the workspace. `--dry-run` applies the same steps in a temporary worktree or copy and leaves the original source unchanged. AI stays off unless you enable it in `.evolvectl.yaml`. `--no-ai` forces the deterministic path for that command.
 
 ## How one upgrade runs
 
@@ -319,7 +336,7 @@ evolvectl plan python:pydantic --to 2.11.0 --workspace examples/python-pydantic
 
 ### upgrade
 
-Run the full campaign and edit the workspace. `--dry-run` uses a temporary copy. Pass only one of `--dry-run` and `--apply`. `--apply` is accepted for explicitness: upgrade already writes unless `--dry-run` is set. `--resume <id>` continues a cancelled run.
+Run the full campaign and edit the workspace. `--dry-run` uses a temporary git worktree when the workspace is clean, and a full copy otherwise (see "Large repositories"). A dry run cannot be resumed; start a new one. Pass only one of `--dry-run` and `--apply`. `--apply` is accepted for explicitness: upgrade already writes unless `--dry-run` is set. `--resume <id>` continues a cancelled run.
 
 Ecosystems without a source recipe finish as needs-review (exit 6) when the manifest change is the whole edit. Read the report before treating that tree as done.
 
@@ -348,6 +365,8 @@ evolvectl upgrade github.com/googleapis/gax-go --to v2.0.2 --to-module github.co
 ```
 
 With a folder replace, the version in the require line is only a label; the folder decides the code that builds. If `go mod tidy` raises that label because another module needs a newer one (for example `google.golang.org/grpc` v1.84.0 requires `gax-go/v2` v2.22.0), the `manifest-target` gate still passes and the run lists the raised version for review.
+
+**Tests.** Go tests run once before the change, after it, and after each repair pass. Each module listed in the plan gets its own `go test ./...`. `--test-timeout 30m` (or `validation.test_timeout`, default `10m`) limits each module's run. `--test-cache` (or `validation.test_cache: true`) drops `-count=1`, so `go test` reuses cached results for packages whose code and dependencies did not change.
 
 **Pull requests.** `--open-pr` commits only the files the run changed, on a new branch named `evolvectl/<module>-<version>`, pushes it, and runs `gh pr create` with the report as the body. It never force-pushes. A run that succeeded opens a normal pull request, a run that needs review opens a draft, and failed, blocked, or dry runs are not published. `--pr-base` picks the base branch.
 
@@ -379,7 +398,7 @@ upgrades:
 
 | `--mode` | What happens |
 | --- | --- |
-| `dry-run` (default) | Each row runs on its own temporary copy. The workspace is not changed. |
+| `dry-run` (default) | Each row runs on its own temporary worktree or copy. The workspace is not changed. |
 | `apply` | Rows edit the workspace one after another. |
 | `branches` | Each row runs on its own branch from the current commit and is committed there. Needs a clean worktree. `--open-pr` also pushes and opens a pull request per row. |
 

@@ -77,6 +77,14 @@ type runCtx struct {
 	origRoot string
 	pristine map[string][]byte
 	vendored bool
+	cleanup  func()
+}
+
+func (rc *runCtx) release() {
+	if rc.cleanup != nil {
+		rc.cleanup()
+		rc.cleanup = nil
+	}
 }
 
 // Run executes or resumes a campaign.
@@ -103,6 +111,9 @@ func (e *Executor) Run(ctx context.Context, req Request) (*domain.RunReport, err
 		}
 		if loaded.Outcome != domain.OutcomeCancelled && loaded.Outcome != domain.OutcomePartial && loaded.Outcome != domain.OutcomeBlocked {
 			return nil, fmt.Errorf("run %s is %s and cannot be resumed", req.ResumeID, loaded.Outcome)
+		}
+		if loaded.DryRun {
+			return nil, fmt.Errorf("run %s was a dry run; its temporary tree is gone, so start a new dry run instead of resuming", req.ResumeID)
 		}
 		rc.report = loaded
 		rc.report.ResumeOf = req.ResumeID
@@ -133,6 +144,7 @@ func (e *Executor) Run(ctx context.Context, req Request) (*domain.RunReport, err
 		rc.report.Target.UseDir = filepath.ToSlash(req.UseDir)
 	}
 	err = e.loop(ctx, rc)
+	rc.release()
 	if err != nil && !errors.Is(err, ErrInterrupted) {
 		if rc.report.Outcome == "" {
 			rc.report.Outcome = domain.OutcomeFailed
@@ -401,16 +413,14 @@ func (e *Executor) impact(ctx context.Context, rc *runCtx) *domain.Impact {
 
 func (e *Executor) prepare(ctx context.Context, rc *runCtx) error {
 	if rc.req.DryRun {
-		dir, err := os.MkdirTemp("", "evolvectl-dry-*")
+		dir, reason, cleanup, err := dryRunTree(ctx, rc)
 		if err != nil {
 			return err
 		}
-		if err := copyTree(rc.origRoot, dir); err != nil {
-			return err
-		}
 		rc.workRoot = dir
+		rc.cleanup = cleanup
 		rc.report.PolicyDecisions = append(rc.report.PolicyDecisions, domain.PolicyDecision{
-			ID: idgen.New("pol_"), Action: "dry-run", Allowed: true, Reason: "changes are applied only in a temporary copy",
+			ID: idgen.New("pol_"), Action: "dry-run", Allowed: true, Reason: reason,
 		})
 		if msg, ok := externalReplaceBlock(rc.origRoot, rc.report.Inventory); !ok {
 			rc.report.Outcome = domain.OutcomeBlocked
@@ -636,7 +646,7 @@ func (e *Executor) finalize(_ context.Context, rc *runCtx) error {
 			rc.report.Outcome = domain.OutcomeFailed
 			return err
 		}
-		_ = os.RemoveAll(rc.workRoot)
+		rc.release()
 	} else if e.Store != nil {
 		rel, err := e.Store.SavePatch(rc.report.ID, patchBytes)
 		if err != nil {

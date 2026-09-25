@@ -69,7 +69,7 @@ func TestVendorEndToEnd(t *testing.T) {
 	t.Setenv("GOPROXY", proxy)
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GOFLAGS", "-mod=mod")
-	t.Setenv("GOMODCACHE", filepath.Join(t.TempDir(), "modcache"))
+	setModuleCache(t)
 
 	ws := t.TempDir()
 	must(t, os.WriteFile(filepath.Join(ws, "go.mod"), []byte("module example.com/app\n\ngo 1.21\n\nrequire example.com/lib v1.0.0\n"), 0o644))
@@ -130,4 +130,26 @@ func TestVendorEndToEnd(t *testing.T) {
 	if string(gomodAfter) != string(gomodBefore) {
 		t.Fatalf("go.mod not restored:\n%s", gomodAfter)
 	}
+}
+
+// setModuleCache points GOMODCACHE at a temp directory. go mod download extracts
+// module trees read-only, so the cache is made writable again before TempDir
+// cleanup; otherwise RemoveAll fails with permission denied.
+func setModuleCache(t *testing.T) {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "modcache")
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			mode := os.FileMode(0o644)
+			if d.IsDir() {
+				mode = 0o755
+			}
+			_ = os.Chmod(path, mode)
+			return nil
+		})
+	})
+	t.Setenv("GOMODCACHE", dir)
 }

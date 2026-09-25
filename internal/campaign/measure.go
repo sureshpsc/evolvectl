@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/evolvectl/evolvectl/internal/commandadapt"
@@ -38,20 +39,30 @@ func (e *Executor) runGoSuite(ctx context.Context, rc *runCtx, phase string, gat
 		}}, nil, 0)
 		return
 	}
+	results := make([]goTestRun, len(dirs))
+	sem := make(chan struct{}, validatorWorkers(rc))
+	var wg sync.WaitGroup
 	for i, dir := range dirs {
-		profileAbs, profileRel := coverageProfile(rc, phase, i)
-		argv := []string{goBin, "test", "-count=1", "-v", "-cover", "-coverprofile", profileAbs, "./..."}
-		run := runner.Run(ctx, runner.Request{Argv: argv, Dir: dir, Timeout: 3 * time.Minute, Env: moduleEnv(rc)})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = runGoTest(ctx, rc, goBin, dir, phase, i)
+		}()
+	}
+	wg.Wait()
+	for i, dir := range dirs {
+		res := results[i]
+		argv, run, profileRel := res.argv, res.run, res.profileRel
 		combined := run.Stdout + "\n" + run.Stderr
 		samples, fails, passed := quality.ParseGoTest(combined)
 		for i := range samples {
 			samples[i].Phase = phase
 			samples[i].Profile = profileRel
 		}
-		if st, err := os.Stat(profileAbs); err == nil && st.Size() > 0 {
-			total := runner.Run(ctx, runner.Request{
-				Argv: []string{goBin, "tool", "cover", "-func=" + profileAbs}, Dir: dir, Timeout: time.Minute, Env: moduleEnv(rc),
-			})
+		if res.hasProfile {
+			total := res.cover
 			if pct, ok := quality.ParseCoverFunc(total.Stdout + "\n" + total.Stderr); ok {
 				samples = append(samples, domain.CoverageSample{
 					Phase: phase, Tool: "go tool cover", Scope: fsio.RelSlash(rc.workRoot, dir), Status: "recorded",
@@ -83,6 +94,41 @@ func (e *Executor) runGoSuite(ctx context.Context, rc *runCtx, phase string, gat
 	}
 }
 
+type goTestRun struct {
+	argv       []string
+	run        domain.ToolRun
+	profileRel string
+	hasProfile bool
+	cover      domain.ToolRun
+}
+
+// runGoTest runs one module's tests and reads its coverage total. It only
+// touches its own profile file, so modules can run concurrently.
+func runGoTest(ctx context.Context, rc *runCtx, goBin, dir, phase string, index int) goTestRun {
+	profileAbs, profileRel := coverageProfile(rc, phase, index)
+	argv := []string{goBin, "test"}
+	if !rc.req.Config.Validation.TestCache {
+		argv = append(argv, "-count=1")
+	}
+	argv = append(argv, "-v", "-cover", "-coverprofile", profileAbs, "./...")
+	out := goTestRun{argv: argv, profileRel: profileRel}
+	out.run = runner.Run(ctx, runner.Request{Argv: argv, Dir: dir, Timeout: rc.req.Config.Validation.TestTimeoutDuration(), Env: moduleEnv(rc)})
+	if st, err := os.Stat(profileAbs); err == nil && st.Size() > 0 {
+		out.hasProfile = true
+		out.cover = runner.Run(ctx, runner.Request{
+			Argv: []string{goBin, "tool", "cover", "-func=" + profileAbs}, Dir: dir, Timeout: time.Minute, Env: moduleEnv(rc),
+		})
+	}
+	return out
+}
+
+func validatorWorkers(rc *runCtx) int {
+	if n := rc.req.Config.Execution.ValidatorWorkers; n > 0 {
+		return n
+	}
+	return 1
+}
+
 func (e *Executor) runPythonTests(ctx context.Context, rc *runCtx, phase string, gates bool) {
 	files := pythonTestFiles(rc)
 	if len(files) == 0 {
@@ -107,7 +153,7 @@ func (e *Executor) runPythonTests(ctx context.Context, rc *runCtx, phase string,
 		argv = []string{py, "-m", "coverage", "run", "-m", "pytest", "-v", "--tb=line"}
 		tool = "coverage"
 	}
-	run := runner.Run(ctx, runner.Request{Argv: argv, Dir: rc.workRoot, Timeout: 3 * time.Minute})
+	run := runner.Run(ctx, runner.Request{Argv: argv, Dir: rc.workRoot, Timeout: rc.req.Config.Validation.TestTimeoutDuration()})
 	combined := run.Stdout + "\n" + run.Stderr
 	fails, passed := quality.ParsePytest(combined)
 	sample := domain.CoverageSample{Phase: phase, Tool: tool, Scope: ".", Status: "recorded"}

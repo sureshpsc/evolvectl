@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -71,6 +72,22 @@ type Repair struct {
 type Validation struct {
 	FailFast bool     `yaml:"fail_fast" json:"fail_fast"`
 	Commands []string `yaml:"commands" json:"commands"`
+	// TestTimeout bounds one test command per module, as a Go duration.
+	TestTimeout string `yaml:"test_timeout" json:"test_timeout"`
+	// TestCache lets go test reuse cached results for packages whose inputs
+	// did not change, instead of forcing -count=1.
+	TestCache bool `yaml:"test_cache" json:"test_cache"`
+}
+
+// DefaultTestTimeout applies when validation.test_timeout is empty.
+const DefaultTestTimeout = 10 * time.Minute
+
+// TestTimeoutDuration returns the parsed timeout or the default.
+func (v Validation) TestTimeoutDuration() time.Duration {
+	if d, err := time.ParseDuration(v.TestTimeout); err == nil && d > 0 {
+		return d
+	}
+	return DefaultTestTimeout
 }
 
 // AI is optional and off by default.
@@ -92,6 +109,9 @@ type Reporting struct {
 type Execution struct {
 	Workers          int `yaml:"workers" json:"workers"`
 	ValidatorWorkers int `yaml:"validator_workers" json:"validator_workers"`
+	// DryRunCopy is auto, worktree, or copy. auto uses a git worktree when
+	// the workspace is clean and falls back to a full copy otherwise.
+	DryRunCopy string `yaml:"dry_run_copy" json:"dry_run_copy"`
 }
 
 // Default returns safe local defaults.
@@ -126,7 +146,7 @@ func Default() File {
 			MaxFilesPerIteration: 100,
 			MaxTotalFiles:        500,
 		},
-		Validation: Validation{FailFast: false, Commands: []string{}},
+		Validation: Validation{FailFast: false, Commands: []string{}, TestTimeout: "10m"},
 		AI: AI{
 			Enabled:         false,
 			Provider:        "noop",
@@ -135,7 +155,7 @@ func Default() File {
 			Redact:          []string{"*.pem", ".env*", "**/secrets/**"},
 		},
 		Reporting: Reporting{Formats: []string{"text", "json"}, IncludeRawLogs: false},
-		Execution: Execution{Workers: 8, ValidatorWorkers: 4},
+		Execution: Execution{Workers: 8, ValidatorWorkers: 4, DryRunCopy: "auto"},
 	}
 }
 
@@ -156,6 +176,19 @@ func Validate(f File) error {
 	}
 	if f.Repair.MaxIterations < 1 {
 		return errors.New("repair.max_iterations must be >= 1")
+	}
+	if f.Validation.TestTimeout != "" {
+		if d, err := time.ParseDuration(f.Validation.TestTimeout); err != nil || d <= 0 {
+			return errors.New("validation.test_timeout must be a positive duration such as 10m or 1h")
+		}
+	}
+	switch f.Execution.DryRunCopy {
+	case "", "auto", "worktree", "copy":
+	default:
+		return errors.New("execution.dry_run_copy must be auto, worktree, or copy")
+	}
+	if f.Execution.ValidatorWorkers < 0 {
+		return errors.New("execution.validator_workers must be >= 0")
 	}
 	if f.AI.Enabled && f.AI.Provider == "" {
 		return errors.New("ai.provider is required when ai.enabled is true")

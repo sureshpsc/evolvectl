@@ -60,20 +60,22 @@ func asStatus(err error, target **statusError) bool {
 }
 
 type flags struct {
-	workspace  string
-	config     string
-	provider   string
-	noAI       bool
-	offline    bool
-	format     string
-	allowDirty bool
-	dryRun     bool
-	apply      bool
-	toModule   string
-	vendorDir  string
-	useDir     string
-	openPR     bool
-	prBase     string
+	workspace   string
+	config      string
+	provider    string
+	noAI        bool
+	offline     bool
+	format      string
+	allowDirty  bool
+	dryRun      bool
+	apply       bool
+	toModule    string
+	vendorDir   string
+	useDir      string
+	openPR      bool
+	prBase      string
+	testTimeout string
+	testCache   bool
 }
 
 func (f flags) opt() app.Option {
@@ -81,6 +83,7 @@ func (f flags) opt() app.Option {
 		Workspace: f.workspace, ConfigPath: f.config, Provider: f.provider,
 		NoAI: f.noAI, Offline: f.offline, Format: f.format, AllowDirty: f.allowDirty, DryRun: f.dryRun,
 		ToModule: f.toModule, VendorDir: f.vendorDir, UseDir: f.useDir, OpenPR: f.openPR, PRBase: f.prBase,
+		TestTimeout: f.testTimeout, TestCache: f.testCache,
 	}
 }
 
@@ -415,7 +418,8 @@ func upgradeCmd(f *flags) *cobra.Command {
 		Short: "Apply an upgrade, repair with recipes, and validate",
 		Long: `Runs preflight, discovery, plan, apply, diagnosis, recipe repair, and validation.
 
---dry-run copies the workspace to a temp directory and leaves the original source unchanged.
+--dry-run works in a temporary git worktree at HEAD when the workspace is clean, or a full copy otherwise (execution.dry_run_copy), and leaves the original source unchanged.
+Go tests run per module in parallel (execution.validator_workers), each limited by --test-timeout or validation.test_timeout.
 --no-ai is the deterministic path. Semantic repair is unavailable for ecosystems without a recipe adapter; those runs finish as needs-review instead of pretending tests passed.
 
 --to-module moves Go code to a new module path, for example a /v2 major version: go.mod require, every import, go.sum, and recipes for the new API. Package names used in code are not renamed.
@@ -447,6 +451,8 @@ Exit codes: 0 required gates passed, 5 validation failed, 6 needs review, 7 poli
 	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move, such as <module>/v2")
 	addUseDirFlag(cmd, f)
 	addPRFlags(cmd, f)
+	cmd.Flags().StringVar(&f.testTimeout, "test-timeout", "", "limit for one module's tests, such as 20m (default validation.test_timeout, 10m)")
+	cmd.Flags().BoolVar(&f.testCache, "test-cache", false, "let go test reuse cached results for unchanged packages instead of forcing -count=1")
 	return cmd
 }
 

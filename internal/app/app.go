@@ -81,6 +81,10 @@ type Option struct {
 	OpenPR bool
 	// PRBase is the pull request base branch. Empty uses the repository default.
 	PRBase string
+	// TestTimeout overrides validation.test_timeout for this invocation.
+	TestTimeout string
+	// TestCache overrides validation.test_cache when set to true.
+	TestCache bool
 }
 
 func (a *App) dir(opt Option) string {
@@ -112,6 +116,15 @@ func (a *App) load(opt Option) (string, config.File, string, string, error) {
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
+		return dir, cfg, "", "", err
+	}
+	if opt.TestTimeout != "" {
+		cfg.Validation.TestTimeout = opt.TestTimeout
+	}
+	if opt.TestCache {
+		cfg.Validation.TestCache = true
+	}
+	if err := config.Validate(cfg); err != nil {
 		return dir, cfg, "", "", err
 	}
 	provider, source := session.Resolve(opt.Provider, a.env(session.EnvProvider), cfg.Workspace.Type)
