@@ -197,14 +197,69 @@ Maven dependencies are named `maven:group:artifact`. Node dependencies are named
 
 ## Install
 
-No package release is required. With Go installed:
+Go 1.23 or newer. The module path in `go.mod` is `github.com/sureshpsc/evolvectl`, the same path as the GitHub repository. The program is in `cmd/evolvectl`. Installing the repository root has no `main` package, so `go install github.com/sureshpsc/evolvectl@v1.0.0` fails.
 
-```bash
-go install github.com/sureshpsc/evolvectl/cmd/evolvectl@latest
+Release [v1.0.0](https://github.com/sureshpsc/evolvectl/releases/tag/v1.0.0) is commit `6ba1a78`. This install works:
+
+```powershell
+go install github.com/sureshpsc/evolvectl/cmd/evolvectl@v1.0.0
 evolvectl version
 ```
 
-That places `evolvectl` in `$(go env GOPATH)/bin`, which must be on `PATH`. The module path in `go.mod` is `github.com/sureshpsc/evolvectl`, the same path as the GitHub repository, which is what that command requires. The program is in `cmd/evolvectl`, so the repository root is not a valid install target. From a local checkout, `go install ./cmd/evolvectl` does the same. A GitHub release is only for downloading a binary on a machine that does not have Go.
+`@latest` now resolves to that same release. Before the tag existed, `@latest` resolved to commit `e143874`, whose `go.mod` still said `github.com/evolvectl/evolvectl`, and the install failed.
+
+The binary is written to `$(go env GOPATH)\bin`. If `evolvectl version` is not recognized, that folder is not on `PATH`:
+
+```powershell
+$env:PATH = "$(go env GOPATH)\bin;" + $env:PATH
+evolvectl version
+```
+
+`evolvectl version` prints `0.1.0`. That string is compiled into the v1.0.0 commit; the git tag is v1.0.0. From a local checkout, `go install ./cmd/evolvectl` builds the same program.
+
+## Demo setup
+
+The rehearsal repository is [sureshpsc/copybara-testing](https://github.com/sureshpsc/copybara-testing), commit `7653c4c`. The step-by-step commands and the results from those runs are in `test/EVOLVECTL-COMMANDS.md`. `./test/demo.ps1` runs the same steps. `./test/demo.ps1 -Library gax` or `-Library retry` runs one library.
+
+You need Go 1.26 or newer, because the monorepo resolves `google.golang.org/grpc` v1.84.0. Git is required. Copybara is required only for the import; `./test/demo.ps1 simulate` commits the same files when Copybara is not available.
+
+```powershell
+git clone https://github.com/sureshpsc/copybara-testing.git
+cd copybara-testing
+./test/demo.ps1 setup
+cd test/out/monorepo
+```
+
+`setup` creates `test/out/monorepo` (the checkout evolvectl edits), `test/out/monorepo.git` (the repository Copybara pushes to), `test/out/acme-retry` (tags `v1.0.0` and `v2.0.0`), and `test/out/copy.bara.sky` (the Copybara config with this machine's paths).
+
+| | gax-go | acme/retry |
+| --- | --- | --- |
+| Old copy in use today | `test/monorepo/third_party/gax-go` | `test/monorepo/third_party/acme-retry` |
+| New version comes from | GitHub `googleapis/gax-go`, tag `v2.0.2` | `test/libs/acme-retry/v2.0.0` |
+| Copybara writes it to | `third_party/gax-go/v2` | `third_party/acme-retry/v2` |
+| Copybara workflow | `import_gax_go` | `import_acme_retry` |
+| Code that breaks | `services/speech/speech.go` | `services/orders/orders.go` |
+| Recipes | bundled in evolvectl | `test/monorepo/recipes/acme-retry/` |
+| Old module | `github.com/googleapis/gax-go` | `github.com/acme/retry` v1.0.0 |
+| New module | `github.com/googleapis/gax-go/v2` v2.0.2 | `github.com/acme/retry/v2` v2.0.0 |
+
+After the import, from `test/out/monorepo`:
+
+```powershell
+evolvectl impact github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --use-dir third_party/gax-go/v2
+evolvectl upgrade github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --use-dir third_party/gax-go/v2
+
+evolvectl impact github.com/acme/retry --to v2.0.0 --to-module github.com/acme/retry/v2 --use-dir third_party/acme-retry/v2
+evolvectl upgrade github.com/acme/retry --to v2.0.0 --to-module github.com/acme/retry/v2 --use-dir third_party/acme-retry/v2
+```
+
+On the run that produced `test/EVOLVECTL-COMMANDS.md`: 4 tests passed before and after. gax-go impact reported 7 removed, 3 changed, and 1 call site. acme/retry impact reported 1 removed, 2 changed, and 4 call sites. Both upgrades finished `succeeded_with_review` (exit 6). Commit the checkout between the two upgrades; evolvectl will not start `upgrade` on a dirty worktree.
+
+Python uses the same `upgrade` command with a different name. There is no `--use-dir` for Python.
+
+```powershell
+evolvectl upgrade python:pydantic --to 2.11.0 --dry-run --workspace examples/python-pydantic
+```
 
 ## Quickstart
 
@@ -228,7 +283,7 @@ A campaign is one dependency, one target version, and one directory under `.evol
 | discover | Walk the workspace once. Record projects, manifests, dependencies, Bazel files, and any `copy.bara.sky`. |
 | assess | Mark declared versions as `registry_unavailable` when no registry was queried. The report keeps the version written in the manifest. |
 | plan | Resolve the dependency, affected projects, matching recipes, and validators. Store a hash of the planned files. |
-| prepare | On `--dry-run`, copy the workspace to a temp directory first. Then run the existing tests and coverage before any edit. |
+| prepare | On `--dry-run`, check out a temporary git worktree when the workspace is clean, or copy the tree otherwise (`execution.dry_run_copy`). Then run the existing tests and coverage before any edit. A dry run cannot be resumed. |
 | apply | Stop if a planned file changed after the plan (`stale plan hash`). Otherwise edit manifests and apply recipes. Snapshot the old bytes. |
 | diagnose | Group compiler and test diagnostics. |
 | repair | Apply deterministic recipe repairs inside the same upgrade. The `repair` command itself edits nothing. |

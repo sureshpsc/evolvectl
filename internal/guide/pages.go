@@ -64,7 +64,7 @@ evolvectl scan --workspace examples/mixed-monorepo
 evolvectl plan google.golang.org/grpc --to v1.75.0 --workspace examples/git-go-grpc
 evolvectl upgrade google.golang.org/grpc --to v1.75.0 --no-ai --workspace examples/git-go-grpc
 evolvectl report --run <id> --format html --output report.html`,
-					Note: "`upgrade` writes the workspace. Add `--dry-run` to apply the same steps in a temporary copy.",
+					Note: "`upgrade` writes the workspace. Add `--dry-run` to apply the same steps in a temporary git worktree, or a full copy when the worktree is dirty.",
 				}},
 			},
 		},
@@ -221,7 +221,7 @@ func howPage() Page {
 						{"`discover`", "Walk the workspace once. Record projects, manifests, dependencies, Bazel files, and any `copy.bara.sky`."},
 						{"`assess`", "Mark declared versions as `registry_unavailable` when no registry was queried. The report keeps the version written in the manifest."},
 						{"`plan`", "Resolve the dependency, affected projects, matching recipes, and validators. Store a hash of the planned files."},
-						{"`prepare`", "On `--dry-run`, copy the workspace to a temp directory first. Then run the existing tests and coverage before any edit."},
+						{"`prepare`", "On `--dry-run`, check out a temporary git worktree when the workspace is clean, or copy the tree otherwise. Then run the existing tests and coverage before any edit. A dry run cannot be resumed."},
 						{"`apply`", "Stop if a planned file changed after the plan (`stale plan hash`). Otherwise edit manifests and apply recipes. Snapshot the old bytes."},
 						{"`diagnose`", "Group compiler and test diagnostics."},
 						{"`repair`", "Apply deterministic recipe repairs inside the same upgrade. The `repair` command itself edits nothing."},
@@ -240,7 +240,7 @@ func howPage() Page {
 			{
 				ID: "safety", Title: "Dry-run, rollback, offline, AI",
 				Bullets: []string{
-					"`--dry-run` applies the campaign in a temporary copy. The original source stays as it was. A `replace` that points outside the workspace stops the dry-run with a named error.",
+					"`--dry-run` applies the campaign in a temporary git worktree when the workspace is clean, or a full copy otherwise. The original source stays as it was. A `replace` that points outside the workspace stops the dry-run with a named error. A dry run cannot be resumed.",
 					"`rollback --run <id>` restores each snapshotted file when its current bytes still match the campaign. Files the run created, such as a new `go.sum`, are removed.",
 					"`--offline` keeps `go test` off the module proxy, and refuses a Go module bump whose target is missing from `go.sum`.",
 					"`--no-ai` forces the deterministic path for that command. AI in `.evolvectl.yaml` stays disabled unless you enable it.",
