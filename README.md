@@ -70,7 +70,7 @@ flowchart LR
 | What it changes | The library's files | Your manifests and the code that calls the library |
 | What proves the result | The copied files match the ref | Your tests and coverage, before the edit and after it |
 
-Evolvectl does not run your sync tool. Run it first, then run evolvectl on the result; any tool works this way. Copybara is the one sync tool with extra built-in help today: `copybara explain` traces a file through a workflow, and `copybara pin` updates the pinned ref (see [copybara](#copybara)). Go repositories that do not use a sync tool can use `evolvectl vendor` for the import step.
+Evolvectl does not run your sync tool. Run it first, then run evolvectl on the result; any tool works this way. Copybara is the one sync tool with extra built-in help today: `copybara init` writes a starter import workflow, `copybara preview` shows the files it would write, `copybara explain` traces a file through a workflow, and `copybara pin` updates the pinned ref (see [copybara](#copybara)). Go repositories that do not use a sync tool can use `evolvectl vendor` for the import step.
 
 ### Example: gax-go from v0 to v2.0.2
 
@@ -81,7 +81,7 @@ The task: services use `github.com/googleapis/gax-go` at `v0.0.0-20161107002406-
 | Find every place that uses gax | grep across the repository, one module at a time | `evolvectl scan` walks every module in the repository |
 | Know which version to move to | read release notes, notice that `v2.0.2` without `/v2` is the old `+incompatible` copy | `evolvectl outdated --online` shows `gax-go/v2@v2.21.0` exists; `plan` warns about `+incompatible` |
 | Know what will break before touching code | read two versions of the source and compare | `evolvectl impact` lists removed and changed API and each file and line that uses it |
-| Bring the new library source in (repository with `third_party/`) | update the sync tool's pinned ref, run the import | your sync tool, for example `copybara migrate` or `git subtree pull`. For Copybara, `evolvectl copybara pin --ref v2.0.2` edits the ref and shows the diff |
+| Bring the new library source in (repository with `third_party/`) | update the sync tool's pinned ref, run the import | your sync tool, for example `copybara migrate` or `git subtree pull`. For Copybara, `evolvectl copybara pin --ref v2.0.2` edits the ref and shows the diff, and `evolvectl upgrade ... --use-dir third_party/gax-go/v2` then works from the imported copy |
 | Bring it in (repository with `go.mod`) | `go get`, fix go.sum, or copy into `third_party/` and add a `replace` | `evolvectl upgrade` or `evolvectl vendor` |
 | Rewrite imports to `/v2` | edit each file | `evolvectl upgrade --to-module github.com/googleapis/gax-go/v2` |
 | Fix each `gax.Invoke` closure | edit each call | the bundled `go.gax.invoke-callsettings` and `go.gax.apicall-callsettings` recipes |
@@ -340,6 +340,15 @@ evolvectl upgrade github.com/googleapis/gax-go --to v2.0.2 --to-module github.co
 
 Without `--to-module`, asking for `v2.0.2` on `github.com/googleapis/gax-go` resolves to `v2.0.2+incompatible`, the pre-modules copy. The plan says so and suggests the `/v2` path.
 
+**A copy your import tool already brought in.** When Copybara or another sync tool has already written the new version into the repository, `--use-dir <dir>` tells evolvectl to use that copy. Each go.mod gets `replace <module> => <dir>`, `impact` compares the old code with that folder, and nothing is downloaded or written into the folder. `plan` and `impact` take the same flag. The run is blocked before any edit if the folder has no go.mod for the target module.
+
+```bash
+evolvectl impact  github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --use-dir third_party/gax-go/v2
+evolvectl upgrade github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --use-dir third_party/gax-go/v2
+```
+
+With a folder replace, the version in the require line is only a label; the folder decides the code that builds. If `go mod tidy` raises that label because another module needs a newer one (for example `google.golang.org/grpc` v1.84.0 requires `gax-go/v2` v2.22.0), the `manifest-target` gate still passes and the run lists the raised version for review.
+
 **Pull requests.** `--open-pr` commits only the files the run changed, on a new branch named `evolvectl/<module>-<version>`, pushes it, and runs `gh pr create` with the report as the body. It never force-pushes. A run that succeeded opens a normal pull request, a run that needs review opens a draft, and failed, blocked, or dry runs are not published. `--pr-base` picks the base branch.
 
 ### vendor
@@ -578,6 +587,26 @@ Selecting `--provider copybara` requires the binary on `PATH`. Preflight stops w
 evolvectl copybara pin --workflow default --ref v2.0.2 --dry-run
 evolvectl copybara pin --config third_party/gax/copy.bara.sky --workflow import --ref 3c9b8f1
 ```
+
+`copybara init` writes a starter import workflow, so you do not have to learn the config language to copy one folder of a library into your repository. It prints the config, or writes it with `--out`, or adds it to an existing file with `--append`.
+
+```bash
+evolvectl copybara init --workflow import_gax_go \
+  --url https://github.com/googleapis/gax-go.git --ref v2.24.1 \
+  --from v2 --to third_party/gax-go/v2 --out copy.bara.sky
+```
+
+The workflow limits `destination_files` to `--to`, so the import never deletes anything else in the destination. `--exclude` leaves origin globs out, `--replace before=after` adds a literal text replacement, and `--license` (on by default) also copies the top-level LICENSE. Without `--destination-url` the workflow writes to a local folder.
+
+`copybara preview` shows what a workflow would write, without the Copybara binary. It fetches the origin ref with git, applies `origin_files`, `core.move`, and literal `core.replace`, and writes the files under `.evolvectl/copybara/<workflow>`. `--ref` tries another version without editing the config. `--against <checkout>` lists what would be added, changed, or deleted in an existing destination.
+
+```bash
+evolvectl copybara preview --workflow import_gax_go
+evolvectl copybara preview --workflow import_gax_go --ref v2.0.2
+evolvectl copybara preview --workflow import_gax_go --against ../internal-repo
+```
+
+Transformations the preview cannot reproduce are listed, and the preview is marked incomplete. Exit code 6 means the preview is incomplete, has warnings, or writes files outside `destination_files`. Always confirm with `copybara validate` and `copybara migrate --dry-run` before a real import.
 
 ### completion
 

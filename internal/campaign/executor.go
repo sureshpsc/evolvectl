@@ -48,6 +48,7 @@ type Request struct {
 	To             string
 	ToModule       string
 	VendorDir      string
+	UseDir         string
 	DryRun         bool
 	NoAI           bool
 	Offline        bool
@@ -129,6 +130,7 @@ func (e *Executor) Run(ctx context.Context, req Request) (*domain.RunReport, err
 		rc.report.Target.To = req.To
 		rc.report.Target.ToModule = req.ToModule
 		rc.report.Target.VendorDir = filepath.ToSlash(req.VendorDir)
+		rc.report.Target.UseDir = filepath.ToSlash(req.UseDir)
 	}
 	err = e.loop(ctx, rc)
 	if err != nil && !errors.Is(err, ErrInterrupted) {
@@ -376,7 +378,12 @@ func (e *Executor) impact(ctx context.Context, rc *runCtx) *domain.Impact {
 		imp.Reason = err.Error()
 		return imp
 	}
-	after, err := apidiff.Source(ctx, gomod, t.Module(), to, rc.req.Offline)
+	var after string
+	if t.UseDir != "" {
+		after = filepath.Join(rc.origRoot, filepath.FromSlash(t.UseDir))
+	} else {
+		after, err = apidiff.Source(ctx, gomod, t.Module(), to, rc.req.Offline)
+	}
 	if err != nil {
 		imp.Reason = err.Error()
 		return imp
@@ -450,6 +457,11 @@ func (e *Executor) mutate(ctx context.Context, rc *runCtx) error {
 	if err := e.rejectMissingSums(rc); err != nil {
 		return err
 	}
+	if target.UseDir != "" {
+		if _, err := checkUseDir(rc); err != nil {
+			return err
+		}
+	}
 	if !rc.req.DryRun {
 		e.snapshotManifests(rc)
 	}
@@ -474,6 +486,11 @@ func (e *Executor) mutate(ctx context.Context, rc *runCtx) error {
 			return err
 		}
 	}
+	if target.UseDir != "" {
+		if err := e.useLocalCopy(rc); err != nil {
+			return err
+		}
+	}
 	if moving(target) {
 		if err := e.rewriteMovedImports(rc, &changes); err != nil {
 			return err
@@ -489,6 +506,9 @@ func (e *Executor) mutate(ctx context.Context, rc *runCtx) error {
 		}
 		if target.VendorDir != "" {
 			reason += "; replace " + target.Module() + " => " + target.VendorDir
+		}
+		if target.UseDir != "" {
+			reason += "; replace " + target.Module() + " => " + target.UseDir + " (copy already in the workspace)"
 		}
 		if err := e.recordManifests(rc, &changes, reason); err != nil {
 			return err
@@ -640,13 +660,27 @@ func (e *Executor) runValidations(ctx context.Context, rc *runCtx, final bool) e
 		mans = rc.report.Plan.Manifests
 	}
 	manifestOK := true
+	var raised []string
 	for _, m := range mans {
-		if !manifest.ContainsVersion(rc.workRoot, m, target.To) {
-			manifestOK = false
+		if manifest.ContainsVersion(rc.workRoot, m, target.To) {
+			continue
 		}
+		if target.UseDir != "" && strings.HasSuffix(m, "go.mod") {
+			if v, ok := raisedLocalRequire(filepath.Join(rc.workRoot, filepath.FromSlash(m)), target.Module(), normalizeTarget("go", target.To)); ok {
+				raised = append(raised, m)
+				rc.report.ManualReview = appendUnique(rc.report.ManualReview, fmt.Sprintf(
+					"%s: requires %s %s, not %s, because another module needs at least %s (go mod graph shows which); the build uses the copy in %s",
+					m, target.Module(), v, target.To, v, target.UseDir))
+				continue
+			}
+		}
+		manifestOK = false
 	}
 	status := domain.GatePass
 	reason := "declared version matches the requested target"
+	if len(raised) > 0 {
+		reason = "replace to " + target.UseDir + " decides the code; the required version was raised by go mod tidy in " + strings.Join(raised, ", ")
+	}
 	if !manifestOK {
 		status = domain.GateFail
 		reason = "target version not found in manifest"

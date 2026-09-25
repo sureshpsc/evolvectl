@@ -7,6 +7,18 @@ import (
 	"testing"
 )
 
+func TestParseIgnoresCommentLines(t *testing.T) {
+	src := "core.workflow(\n    name = \"w\",\n    origin_files = glob([\"a/**\"]),\n    # only this folder\n    destination_files = glob([\"b/**\"]),  # owned here\n)\n"
+	parsed := Parse("copy.bara.sky", src)
+	if len(parsed.Workflows) != 1 {
+		t.Fatalf("%+v", parsed)
+	}
+	wf := parsed.Workflows[0]
+	if len(wf.Unresolved) != 0 || strings.Join(wf.DestFiles, ",") != "b/**" {
+		t.Fatalf("unresolved %v destination %v", wf.Unresolved, wf.DestFiles)
+	}
+}
+
 func TestExportWorkflow(t *testing.T) {
 	root := findModule(t)
 	b, err := os.ReadFile(filepath.Join(root, "examples", "mixed-monorepo", "copy.bara.sky"))

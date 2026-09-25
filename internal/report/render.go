@@ -131,6 +131,9 @@ func PRBody(r *domain.RunReport) string {
 	default:
 		fmt.Fprintf(&b, "Upgrades `%s` to %s.\n\n", t.Name, t.To)
 	}
+	if t.UseDir != "" {
+		fmt.Fprintf(&b, "Uses the copy already imported into `%s`.\n\n", t.UseDir)
+	}
 	fmt.Fprintf(&b, "- Outcome: `%s` — %s\n", r.Outcome, redact.Text(r.OutcomeReason))
 	if r.Plan != nil && len(r.Plan.CurrentVersions) > 0 {
 		fmt.Fprintf(&b, "- From: %s\n", strings.Join(r.Plan.CurrentVersions, ", "))

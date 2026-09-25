@@ -161,6 +161,9 @@ func Build(req Request) (*domain.Plan, error) {
 		if req.Target.VendorDir != "" {
 			plan.ReviewPoints = append(plan.ReviewPoints, fmt.Sprintf("module source is copied into %s and wired with a replace directive; review the license and the vendored diff", req.Target.VendorDir))
 		}
+		if req.Target.UseDir != "" {
+			plan.ReviewPoints = append(plan.ReviewPoints, fmt.Sprintf("%s is used as already imported and wired with a replace directive; it is not downloaded or modified", req.Target.UseDir))
+		}
 	}
 	plan.CapabilityNotes = capabilityNotes(req.Target.Ecosystem)
 	order := 1
@@ -168,6 +171,10 @@ func Build(req Request) (*domain.Plan, error) {
 	order++
 	if req.Target.VendorDir != "" {
 		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-vendor", Order: order, Action: "copy " + req.Target.Module() + "@" + req.Target.To + " into " + req.Target.VendorDir + " and add a replace", Target: req.Target.VendorDir, Capability: "dependencies.vendor", Support: domain.SupportNative})
+		order++
+	}
+	if req.Target.UseDir != "" {
+		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-use-dir", Order: order, Action: "replace " + req.Target.Module() + " with the copy in " + req.Target.UseDir, Target: req.Target.UseDir, Capability: "dependencies.local", Support: domain.SupportNative})
 		order++
 	}
 	if req.Target.ToModule != "" && req.Target.ToModule != req.Target.Name {
@@ -182,7 +189,7 @@ func Build(req Request) (*domain.Plan, error) {
 		plan.Steps = append(plan.Steps, domain.PlanStep{ID: "step-" + v, Order: order, Action: "validate", Target: v, Capability: "validate.run", Support: domain.SupportNative})
 		order++
 	}
-	plan.Hash = idgen.Short(16, plan.Target.Ecosystem, plan.Target.Name, plan.Target.To, plan.Target.ToModule, plan.Target.VendorDir, strings.Join(plan.Manifests, ","), strings.Join(plan.Files, ","), strings.Join(plan.Recipes, ","))
+	plan.Hash = idgen.Short(16, plan.Target.Ecosystem, plan.Target.Name, plan.Target.To, plan.Target.ToModule, plan.Target.VendorDir, plan.Target.UseDir, strings.Join(plan.Manifests, ","), strings.Join(plan.Files, ","), strings.Join(plan.Recipes, ","))
 	return plan, nil
 }
 

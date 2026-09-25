@@ -37,6 +37,7 @@ func Build(root string, inv domain.Inventory) domain.Graph {
 			g.Edges = append(g.Edges, domain.Edge{From: d.ProjectID, To: d.ID, Kind: "depends_on"})
 		}
 	}
+	idx := indexDependencies(inv.Dependencies)
 	for _, f := range inv.SourceFiles {
 		if f.Generated {
 			continue
@@ -51,10 +52,8 @@ func Build(root string, inv domain.Inventory) domain.Graph {
 			imports = readImports(root, f)
 		}
 		for _, imp := range imports {
-			for _, d := range inv.Dependencies {
-				if importMatches(d, imp) {
-					g.Edges = append(g.Edges, domain.Edge{From: fid, To: d.ID, Kind: "imports"})
-				}
+			for _, i := range idx.match(inv.Dependencies, imp, f.ProjectID) {
+				g.Edges = append(g.Edges, domain.Edge{From: fid, To: inv.Dependencies[i].ID, Kind: "imports"})
 			}
 		}
 	}
@@ -98,6 +97,51 @@ func readImports(root string, f domain.SourceFile) []string {
 	default:
 		return nil
 	}
+}
+
+// depIndex finds the dependencies an import can refer to without comparing every pair.
+type depIndex map[string][]int
+
+func indexDependencies(deps []domain.Dependency) depIndex {
+	idx := depIndex{}
+	for i, d := range deps {
+		idx[d.Name] = append(idx[d.Name], i)
+		if d.Ecosystem == "python" {
+			if base := strings.ReplaceAll(strings.Split(d.Name, "[")[0], "-", "_"); base != d.Name {
+				idx[base] = append(idx[base], i)
+			}
+		}
+	}
+	return idx
+}
+
+// match returns the dependencies imp refers to. A monorepo declares the same module in many
+// manifests, so declarations in the importing file's own project win when there are any.
+func (idx depIndex) match(deps []domain.Dependency, imp, project string) []int {
+	keys := []string{imp}
+	for i := len(imp) - 1; i > 0; i-- {
+		if imp[i] == '/' || imp[i] == '.' {
+			keys = append(keys, imp[:i])
+		}
+	}
+	var all, own []int
+	seen := map[int]bool{}
+	for _, k := range keys {
+		for _, i := range idx[k] {
+			if seen[i] || !importMatches(deps[i], imp) {
+				continue
+			}
+			seen[i] = true
+			all = append(all, i)
+			if project != "" && deps[i].ProjectID == project {
+				own = append(own, i)
+			}
+		}
+	}
+	if len(own) > 0 {
+		return own
+	}
+	return all
 }
 
 func importMatches(d domain.Dependency, imp string) bool {

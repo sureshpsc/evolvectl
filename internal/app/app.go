@@ -18,6 +18,7 @@ import (
 	"github.com/evolvectl/evolvectl/internal/campaign"
 	"github.com/evolvectl/evolvectl/internal/commandadapt"
 	"github.com/evolvectl/evolvectl/internal/config"
+	"github.com/evolvectl/evolvectl/internal/copybaralocal"
 	"github.com/evolvectl/evolvectl/internal/diagnostics"
 	"github.com/evolvectl/evolvectl/internal/discovery"
 	"github.com/evolvectl/evolvectl/internal/domain"
@@ -74,6 +75,8 @@ type Option struct {
 	ToModule string
 	// VendorDir copies the module source into the workspace and adds a replace.
 	VendorDir string
+	// UseDir points go.mod at a copy already in the workspace, for example one written by Copybara.
+	UseDir string
 	// OpenPR commits the run on a new branch, pushes it, and opens a pull request.
 	OpenPR bool
 	// PRBase is the pull request base branch. Empty uses the repository default.
@@ -343,7 +346,7 @@ func (a *App) campaign(ctx context.Context, opt Option, dependency, to string, d
 	noAI := opt.NoAI || !cfg.AI.Enabled
 	ex := &campaign.Executor{Store: state.Open(dir)}
 	rep, err := ex.Run(ctx, campaign.Request{
-		Workspace: dir, Dependency: dependency, To: to, ToModule: opt.ToModule, VendorDir: opt.VendorDir,
+		Workspace: dir, Dependency: dependency, To: to, ToModule: opt.ToModule, VendorDir: opt.VendorDir, UseDir: opt.UseDir,
 		DryRun: dry, NoAI: noAI, Offline: opt.Offline,
 		AllowDirty: opt.AllowDirty, Provider: provider, ProviderSource: source,
 		Confidence: cfg.Repair.ConfidenceThreshold, HaltAfter: halt, PlanOnly: halt == "plan", Config: cfg, Recipes: recipes,
@@ -432,6 +435,10 @@ func (a *App) printPlan(rep *domain.RunReport, format string) {
 	}
 	if p.Target.VendorDir != "" {
 		fmt.Fprintf(a.Out, "Vendor into          %s\n", p.Target.VendorDir)
+	}
+	if p.Target.UseDir != "" {
+		fmt.Fprintf(a.Out, "Use local copy       %s\n", p.Target.UseDir)
+		extra += " --use-dir " + p.Target.UseDir
 	}
 	fmt.Fprintf(a.Out, "Projects             %s\n", strings.Join(p.Projects, ", "))
 	fmt.Fprintf(a.Out, "Files                %d\n", len(p.Files))
@@ -891,6 +898,199 @@ func (a *App) CopybaraExplain(opt Option, path, workflow, file, format string) (
 	}
 	fmt.Fprintln(a.Out, "No migration was run.")
 	return exitcode.Success, nil
+}
+
+// CopybaraInit writes an import workflow. With out empty it prints the config; with appendTo
+// it adds the workflow to an existing config.
+func (a *App) CopybaraInit(opt Option, o skyparse.InitOptions, out string, appendTo bool) (int, error) {
+	body, err := skyparse.Template(o)
+	if err != nil {
+		return exitcode.Invalid, err
+	}
+	if out == "" {
+		fmt.Fprint(a.Out, body)
+		return exitcode.Success, nil
+	}
+	full := out
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(a.dir(opt), out)
+	}
+	existing, err := os.ReadFile(full)
+	switch {
+	case err == nil && !appendTo:
+		return exitcode.Invalid, fmt.Errorf("%s exists; pass --append to add the workflow to it", out)
+	case err == nil:
+		if _, err := skyparse.Workflow(string(existing), o.Name); err == nil {
+			return exitcode.Invalid, fmt.Errorf("%s already has a workflow named %s", out, o.Name)
+		}
+		body = strings.TrimRight(string(existing), "\n") + "\n\n" + body
+	case !os.IsNotExist(err):
+		return exitcode.Invalid, err
+	}
+	if err := fsio.WriteAtomic(full, []byte(body), 0o644); err != nil {
+		return exitcode.Generic, err
+	}
+	cfg := filepath.ToSlash(out)
+	fmt.Fprintf(a.Out, "Wrote workflow %s to %s.\n\nNext:\n", o.Name, cfg)
+	fmt.Fprintf(a.Out, "  evolvectl copybara preview --config %s --workflow %s     # see the files it would write, no Copybara needed\n", cfg, o.Name)
+	fmt.Fprintf(a.Out, "  copybara validate %s\n", cfg)
+	if o.DestinationURL != "" {
+		fmt.Fprintf(a.Out, "  copybara migrate %s %s --dry-run --init-history   # first import into this destination\n", cfg, o.Name)
+	} else {
+		fmt.Fprintf(a.Out, "  copybara migrate %s %s --folder-dir <dir>          # folder destination\n", cfg, o.Name)
+	}
+	return exitcode.Success, nil
+}
+
+// CopybaraPreview reproduces a workflow's literal file operations locally and, with against,
+// lists what it would add, change, and delete there. It never runs Copybara or pushes.
+func (a *App) CopybaraPreview(ctx context.Context, opt Option, path, workflow, ref, out, against string) (int, error) {
+	if workflow == "" {
+		return exitcode.Invalid, fmt.Errorf("--workflow is required")
+	}
+	if path == "" {
+		path = "copy.bara.sky"
+	}
+	root := a.dir(opt)
+	full := path
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(root, path)
+	}
+	b, err := os.ReadFile(full)
+	if err != nil {
+		return exitcode.Invalid, err
+	}
+	sp, err := skyparse.Workflow(string(b), workflow)
+	if err != nil {
+		return exitcode.Invalid, err
+	}
+	if ref != "" {
+		sp.OriginRef = ref
+	}
+	if sp.OriginURL == "" {
+		return exitcode.Invalid, fmt.Errorf("workflow %s: origin url is not a literal; nothing to fetch", workflow)
+	}
+	if opt.Offline && !strings.HasPrefix(sp.OriginURL, "file://") && !filepath.IsAbs(sp.OriginURL) {
+		return exitcode.Invalid, fmt.Errorf("--offline: origin %s needs the network", redact.Text(sp.OriginURL))
+	}
+	src, commit, err := copybaralocal.Fetch(ctx, sp.OriginURL, sp.OriginRef)
+	if err != nil {
+		return exitcode.Generic, fmt.Errorf("fetch %s@%s: %s", redact.Text(sp.OriginURL), sp.OriginRef, redact.Text(err.Error()))
+	}
+	defer os.RemoveAll(src)
+	res, applyErr := copybaralocal.Apply(sp, src)
+	if res == nil {
+		return exitcode.Generic, applyErr
+	}
+	res.Commit = commit
+	if against != "" {
+		dest := against
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(root, against)
+		}
+		if err := res.Compare(sp, dest); err != nil {
+			return exitcode.Generic, err
+		}
+		res.Compared = filepath.ToSlash(against)
+	}
+	if applyErr == nil {
+		if out == "" {
+			out = filepath.Join(".evolvectl", "copybara", workflow)
+		}
+		dir := out
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(root, out)
+		}
+		if err := res.Write(dir); err != nil {
+			return exitcode.Invalid, err
+		}
+		res.Output = filepath.ToSlash(out)
+	}
+	if opt.Format == "json" {
+		body, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Fprintf(a.Out, "%s\n", redact.Text(string(body)))
+	} else {
+		fmt.Fprint(a.Out, previewText(res, applyErr))
+	}
+	switch {
+	case applyErr != nil:
+		return exitcode.NeedsReview, applyErr
+	case !res.Complete || len(res.Warnings) > 0 || len(res.OutsideDest) > 0:
+		return exitcode.NeedsReview, nil
+	}
+	return exitcode.Success, nil
+}
+
+func previewText(r *copybaralocal.Result, applyErr error) string {
+	var s strings.Builder
+	fmt.Fprintf(&s, "Workflow        %s\n", r.Workflow)
+	fmt.Fprintf(&s, "Origin          %s @ %s (commit %s)\n", redact.Text(r.OriginURL), r.OriginRef, short(r.Commit))
+	fmt.Fprintf(&s, "Destination     %s\n", r.Destination)
+	fmt.Fprintf(&s, "Selected        %d file(s) by origin_files\n", r.Selected)
+	for _, st := range r.Steps {
+		if st.Occurrences > 0 {
+			fmt.Fprintf(&s, "  %-60s %d file(s), %d replacement(s)\n", st.Step, st.Files, st.Occurrences)
+		} else {
+			fmt.Fprintf(&s, "  %-60s %d file(s)\n", st.Step, st.Files)
+		}
+	}
+	for _, i := range r.Ignored {
+		fmt.Fprintf(&s, "  %-60s commit message only; no file change\n", i)
+	}
+	fmt.Fprintf(&s, "Result          %d file(s)\n", len(r.Files))
+	for i, f := range r.Files {
+		if i == 15 {
+			fmt.Fprintf(&s, "  ... %d more\n", len(r.Files)-15)
+			break
+		}
+		fmt.Fprintf(&s, "  %s\n", f)
+	}
+	if r.Compared != "" {
+		fmt.Fprintf(&s, "Against %s: %d added, %d modified, %d deleted (inside destination_files only)\n", r.Compared, len(r.Added), len(r.Modified), len(r.Deleted))
+		for _, group := range []struct {
+			tag  string
+			list []string
+		}{{"A", r.Added}, {"M", r.Modified}, {"D", r.Deleted}} {
+			for i, f := range group.list {
+				if i == 10 {
+					fmt.Fprintf(&s, "  %s ... %d more\n", group.tag, len(group.list)-10)
+					break
+				}
+				fmt.Fprintf(&s, "  %s %s\n", group.tag, f)
+			}
+		}
+	}
+	for _, f := range r.OutsideDest {
+		fmt.Fprintf(&s, "Warning         %s is outside destination_files\n", f)
+	}
+	for _, f := range r.SkippedBin {
+		fmt.Fprintf(&s, "Warning         %s is binary; core.replace was not applied to it here\n", f)
+	}
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&s, "Warning         %s\n", w)
+	}
+	for _, u := range r.Unsupported {
+		fmt.Fprintf(&s, "Not reproduced  %s\n", u)
+	}
+	if applyErr != nil {
+		fmt.Fprintf(&s, "Stopped         %s\n", applyErr)
+	}
+	if r.Output != "" {
+		fmt.Fprintf(&s, "Files written   %s\n", r.Output)
+	}
+	if r.Complete {
+		s.WriteString("Every transformation was reproduced. Copybara was not run and nothing was pushed.\n")
+	} else {
+		s.WriteString("Some transformations were not reproduced; run copybara migrate --dry-run for the full result. Copybara was not run here.\n")
+	}
+	return s.String()
+}
+
+func short(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
 }
 
 // CopybaraPin sets the origin ref of one workflow in copy.bara.sky and prints the diff.

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/evolvectl/evolvectl/internal/apidiff"
 	"github.com/evolvectl/evolvectl/internal/domain"
 	"github.com/evolvectl/evolvectl/internal/fsio"
@@ -189,6 +191,60 @@ func (e *Executor) vendorModule(ctx context.Context, rc *runCtx, changes *[]doma
 	})
 	rc.vendored = true
 	return nil
+}
+
+// useLocalCopy points each planned go.mod at a copy of the new version that a sync tool
+// already wrote into the workspace. Nothing is downloaded and the copy is not modified.
+func (e *Executor) useLocalCopy(rc *runCtx) error {
+	t := rc.report.Target
+	dir, err := checkUseDir(rc)
+	if err != nil {
+		return err
+	}
+	for _, mod := range goModFiles(rc) {
+		abs := filepath.Join(rc.workRoot, filepath.FromSlash(mod))
+		b, err := os.ReadFile(abs)
+		if err != nil {
+			return err
+		}
+		target, err := filepath.Rel(filepath.Dir(abs), dir)
+		if err != nil {
+			return err
+		}
+		out, changed, err := modmove.SetReplace(mod, b, t.Module(), filepath.ToSlash(target))
+		if err != nil {
+			return err
+		}
+		if changed {
+			if err := fsio.WriteAtomic(abs, out, 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkUseDir returns the absolute --use-dir directory once it is inside the workspace and
+// holds a go.mod for the target module.
+func checkUseDir(rc *runCtx) (string, error) {
+	t := rc.report.Target
+	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(t.UseDir)))
+	if filepath.IsAbs(t.UseDir) || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		rc.report.Outcome = domain.OutcomeBlocked
+		return "", fmt.Errorf("--use-dir must be a relative path inside the workspace: %s", t.UseDir)
+	}
+	dir := filepath.Join(rc.workRoot, filepath.FromSlash(rel))
+	body, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		rc.report.Outcome = domain.OutcomeBlocked
+		rc.report.NextStep = "run the import first so " + rel + " holds the new version with its go.mod"
+		return "", fmt.Errorf("--use-dir %s has no go.mod: %w", rel, err)
+	}
+	if got := modfile.ModulePath(body); got != t.Module() {
+		rc.report.Outcome = domain.OutcomeBlocked
+		return "", fmt.Errorf("--use-dir %s declares module %q, want %q", rel, got, t.Module())
+	}
+	return dir, nil
 }
 
 // treeHash hashes every regular file under dir. A missing dir returns "" and nil files.

@@ -17,14 +17,87 @@ func Unified(path, oldSrc, newSrc string) string {
 	ops := lcs(oldLines, newLines)
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", path, path)
-	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(oldLines), len(newLines))
-	for _, op := range ops {
-		b.WriteString(op)
-		if !strings.HasSuffix(op, "\n") {
+	for _, h := range hunks(ops, context) {
+		fmt.Fprintf(&b, "@@ -%s +%s @@\n", rangeOf(h.oldStart, h.oldLen), rangeOf(h.newStart, h.newLen))
+		for _, op := range ops[h.from:h.to] {
+			b.WriteString(op)
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
+}
+
+const context = 3
+
+type hunk struct {
+	from, to                           int
+	oldStart, oldLen, newStart, newLen int
+}
+
+// hunks groups changed lines with up to n lines of unchanged context on each side, merging
+// groups whose context overlaps, as diff -u does.
+func hunks(ops []string, n int) []hunk {
+	var out []hunk
+	oldLine, newLine := make([]int, len(ops)+1), make([]int, len(ops)+1)
+	o, w := 1, 1
+	for i, op := range ops {
+		oldLine[i], newLine[i] = o, w
+		switch op[0] {
+		case ' ':
+			o++
+			w++
+		case '-':
+			o++
+		case '+':
+			w++
+		}
+	}
+	oldLine[len(ops)], newLine[len(ops)] = o, w
+	for i := 0; i < len(ops); {
+		if ops[i][0] == ' ' {
+			i++
+			continue
+		}
+		start := max(0, i-n)
+		end := i
+		for end < len(ops) {
+			if ops[end][0] != ' ' {
+				end++
+				continue
+			}
+			run := end
+			for run < len(ops) && ops[run][0] == ' ' {
+				run++
+			}
+			if run == len(ops) || run-end > 2*n {
+				end = min(len(ops), end+n)
+				break
+			}
+			end = run
+		}
+		h := hunk{from: start, to: end, oldStart: oldLine[start], newStart: newLine[start]}
+		for _, op := range ops[start:end] {
+			if op[0] != '+' {
+				h.oldLen++
+			}
+			if op[0] != '-' {
+				h.newLen++
+			}
+		}
+		out = append(out, h)
+		i = end
+	}
+	return out
+}
+
+func rangeOf(start, length int) string {
+	if length == 0 {
+		start--
+	}
+	if length == 1 {
+		return fmt.Sprint(start)
+	}
+	return fmt.Sprintf("%d,%d", start, length)
 }
 
 func split(s string) []string {

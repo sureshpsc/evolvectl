@@ -316,6 +316,12 @@ func ignored(rel string, patterns []string) bool {
 		if p == "" {
 			continue
 		}
+		if dir, ok := strings.CutSuffix(p, "/**"); ok && !strings.Contains(dir, "*") {
+			if slash == dir || strings.HasPrefix(slash, dir+"/") {
+				return true
+			}
+			continue
+		}
 		if strings.Contains(p, "**/") {
 			body := strings.Trim(p, "*")
 			body = strings.Trim(body, "/")

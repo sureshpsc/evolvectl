@@ -65,6 +65,7 @@ func Commands() []Command {
 			Flags: []string{
 				"`--to` — target version.",
 				"`--to-module` — new module path for a major-version move.",
+				"`--use-dir` — compare with a copy of the new version already in the workspace, for example one Copybara imported.",
 			},
 			Examples: []Code{{
 				Body: "evolvectl impact github.com/googleapis/gax-go --to v2.0.2 --to-module github.com/googleapis/gax-go/v2 --workspace examples/go-gax-v2",
@@ -80,6 +81,8 @@ func Commands() []Command {
 			Flags: []string{
 				"`--dependency` — the same value as the positional argument.",
 				"`--to` — target version.",
+				"`--to-module` — new module path for a major-version move.",
+				"`--use-dir` — the new version is already in the workspace at this folder.",
 			},
 			Examples: []Code{{
 				Body: "evolvectl plan google.golang.org/grpc --to v1.75.0 --workspace examples/git-go-grpc\nevolvectl plan python:pydantic --to 2.11.0 --workspace examples/python-pydantic",
@@ -100,6 +103,7 @@ func Commands() []Command {
 				"`--dry-run` — write only inside a temporary copy.",
 				"`--apply` — accepted for explicitness. Upgrade already writes unless `--dry-run` is set.",
 				"`--to-module` — move to a new module path, such as a `/v2` major version. The go.mod require, every import, and go.sum are updated, then recipes for the new API run. Package names used in code are not renamed.",
+				"`--use-dir` — use a copy of the new version that a sync tool such as Copybara already wrote into the workspace, for example `third_party/gax-go/v2`. go.mod gets a replace to it and nothing is downloaded. If `go mod tidy` raises the required version, the run lists it for review; the folder still decides the code.",
 				"`--open-pr` — commit the changed files on a new branch, push, and open a pull request with `gh`, using the report as the body. Never force-pushes. Off by default.",
 				"`--pr-base` — pull request base branch.",
 			},
@@ -299,7 +303,7 @@ func Commands() []Command {
 		},
 		{
 			Name: "copybara", Summary: "Inspect `copy.bara.sky` without migrating.",
-			Paragraphs: []string{"Subcommands explain one workflow or list the workflow names. Neither command runs the Copybara binary and neither command migrates."},
+			Paragraphs: []string{"Subcommands write a starter workflow, preview its output, explain or list workflows, and pin a ref. None of them runs the Copybara binary or migrates."},
 			Examples:   []Code{{Body: "evolvectl copybara list --config examples/mixed-monorepo/copy.bara.sky"}},
 		},
 		{
@@ -334,6 +338,33 @@ func Commands() []Command {
 				"`--dry-run` — print the diff without writing.",
 			},
 			Examples: []Code{{Body: "evolvectl copybara pin --config examples/mixed-monorepo/copy.bara.sky --workflow export-go-lib --ref v1.2.0 --dry-run"}},
+		},
+		{
+			Name: "copybara init", Summary: "Write a starter import workflow.",
+			Paragraphs: []string{
+				"Generates one `core.workflow` that copies `--from` in the origin to `--to` in the destination, with `destination_files` limited to `--to`. Without `--destination-url` it uses `folder.destination()`. The config is printed unless `--out` is given; `--append` adds the workflow to an existing file and refuses a duplicate name.",
+			},
+			Flags: []string{
+				"`--workflow`, `--url`, `--ref` — workflow name, origin repository, and ref.",
+				"`--from`, `--to` — origin folder and destination folder.",
+				"`--exclude` — origin globs to leave out. `--replace before=after` — literal text replacement.",
+				"`--destination-url` — git destination. `--license` — also copy the top-level LICENSE (default true).",
+				"`--out`, `--append` — write to a file, or append to it.",
+			},
+			Examples: []Code{{Body: "evolvectl copybara init --workflow import_gax_go --url <gax-go git URL> --ref v2.24.1 --from v2 --to third_party/gax-go/v2"}},
+		},
+		{
+			Name: "copybara preview", Summary: "Show the files a workflow would write, without Copybara.",
+			Paragraphs: []string{
+				"Fetches the origin ref with git, applies `origin_files`, `core.move`, and literal `core.replace`, and writes the result under `.evolvectl/copybara/<workflow>`. Other transformations are listed as unsupported and the preview is marked incomplete. `--against` compares with a destination checkout inside `destination_files`.",
+				"Exit code 6 means the preview is incomplete, has warnings, or writes files outside `destination_files`.",
+			},
+			Flags: []string{
+				"`--config`, `--workflow` — config and workflow.",
+				"`--ref` — use this ref instead of the one in the config.",
+				"`--out` — output folder. `--against` — destination checkout to compare with.",
+			},
+			Examples: []Code{{Body: "evolvectl copybara preview --config copy.bara.sky --workflow import_gax_go --ref v2.0.2"}},
 		},
 		{
 			Name: "completion", Summary: "Generate a shell completion script.",

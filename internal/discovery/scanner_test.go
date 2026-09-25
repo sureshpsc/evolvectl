@@ -9,6 +9,25 @@ import (
 	"testing"
 )
 
+func TestIgnoredPatterns(t *testing.T) {
+	cases := []struct {
+		rel, pattern string
+		want         bool
+	}{
+		{"recipes", "recipes/**", true},
+		{"recipes/acme/testdata/input/a.go", "recipes/**", true},
+		{"services/recipes/a.go", "recipes/**", false},
+		{"recipesx/a.go", "recipes/**", false},
+		{"a/vendor/b.go", "**/vendor/**", true},
+		{"gen.pb.go", "*.pb.go", true},
+	}
+	for _, c := range cases {
+		if got := ignored(c.rel, []string{c.pattern}); got != c.want {
+			t.Errorf("ignored(%q, %q) = %v, want %v", c.rel, c.pattern, got, c.want)
+		}
+	}
+}
+
 func TestMixedScan(t *testing.T) {
 	src := filepath.Join(moduleRoot(t), "examples", "mixed-monorepo")
 	root := t.TempDir()

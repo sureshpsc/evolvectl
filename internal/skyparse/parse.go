@@ -21,7 +21,8 @@ type FileExplanation struct {
 
 // Parse extracts workflow structure from source.
 func Parse(path, src string) FileExplanation {
-	src = substituteAssignments(src)
+	hash := fsio.HashBytes([]byte(src))
+	src = substituteAssignments(stripComments(src))
 	var out FileExplanation
 	out.Loads = findLoads(src)
 	bodies := extractCalls(src, "core.workflow")
@@ -32,7 +33,7 @@ func Parse(path, src string) FileExplanation {
 	for _, body := range bodies {
 		wf := domain.WorkflowExplanation{
 			ConfigPath: path,
-			ConfigHash: fsio.HashBytes([]byte(src)),
+			ConfigHash: hash,
 			Confidence: "partial",
 			Loads:      out.Loads,
 			Notes:      []string{"static reading only; expressions are not executed"},
@@ -535,6 +536,11 @@ func matchGlob(pattern, file string) bool {
 func globToRegex(pattern string) string {
 	var b strings.Builder
 	for i := 0; i < len(pattern); i++ {
+		if strings.HasPrefix(pattern[i:], "**/") {
+			b.WriteString("(?:.*/)?")
+			i += 2
+			continue
+		}
 		if strings.HasPrefix(pattern[i:], "**") {
 			b.WriteString(".*")
 			i++

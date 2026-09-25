@@ -140,7 +140,9 @@ type Inventory struct {
 
 // Target is the requested upgrade coordinate. ToModule is set when the module path changes,
 // as in a /vN major-version move or a rename. VendorDir is set when the module source is
-// copied into the workspace and wired with a replace directive.
+// copied into the workspace and wired with a replace directive. UseDir is set when a sync
+// tool already put the new version in the workspace; it is wired with a replace and never
+// downloaded.
 type Target struct {
 	Ecosystem string `json:"ecosystem"`
 	Name      string `json:"name"`
@@ -148,6 +150,7 @@ type Target struct {
 	Raw       string `json:"raw,omitempty"`
 	ToModule  string `json:"to_module,omitempty"`
 	VendorDir string `json:"vendor_dir,omitempty"`
+	UseDir    string `json:"use_dir,omitempty"`
 }
 
 // Module is the module path the workspace should require after the run.

@@ -13,6 +13,7 @@ import (
 	"github.com/evolvectl/evolvectl/internal/apperr"
 	"github.com/evolvectl/evolvectl/internal/exitcode"
 	"github.com/evolvectl/evolvectl/internal/session"
+	"github.com/evolvectl/evolvectl/internal/skyparse"
 	"github.com/evolvectl/evolvectl/internal/version"
 )
 
@@ -70,6 +71,7 @@ type flags struct {
 	apply      bool
 	toModule   string
 	vendorDir  string
+	useDir     string
 	openPR     bool
 	prBase     string
 }
@@ -78,7 +80,7 @@ func (f flags) opt() app.Option {
 	return app.Option{
 		Workspace: f.workspace, ConfigPath: f.config, Provider: f.provider,
 		NoAI: f.noAI, Offline: f.offline, Format: f.format, AllowDirty: f.allowDirty, DryRun: f.dryRun,
-		ToModule: f.toModule, VendorDir: f.vendorDir, OpenPR: f.openPR, PRBase: f.prBase,
+		ToModule: f.toModule, VendorDir: f.vendorDir, UseDir: f.useDir, OpenPR: f.openPR, PRBase: f.prBase,
 	}
 }
 
@@ -296,7 +298,12 @@ Exit codes: 0 impact recorded, 6 impact unavailable (for example offline with an
 	cmd.Flags().StringVar(&dep, "dependency", "", "module path")
 	cmd.Flags().StringVar(&to, "to", "", "target version")
 	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move")
+	addUseDirFlag(cmd, f)
 	return cmd
+}
+
+func addUseDirFlag(cmd *cobra.Command, f *flags) {
+	cmd.Flags().StringVar(&f.useDir, "use-dir", "", "new version already in the workspace (for example imported by Copybara); adds a replace and never downloads")
 }
 
 func vendorCmd(f *flags) *cobra.Command {
@@ -397,6 +404,7 @@ Exit codes: 0 plan written, 2 unknown dependency or bad arguments.`,
 	cmd.Flags().StringVar(&dep, "dependency", "", "ecosystem:name or module path")
 	cmd.Flags().StringVar(&to, "to", "", "target version")
 	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move, such as <module>/v2")
+	addUseDirFlag(cmd, f)
 	return cmd
 }
 
@@ -411,6 +419,7 @@ func upgradeCmd(f *flags) *cobra.Command {
 --no-ai is the deterministic path. Semantic repair is unavailable for ecosystems without a recipe adapter; those runs finish as needs-review instead of pretending tests passed.
 
 --to-module moves Go code to a new module path, for example a /v2 major version: go.mod require, every import, go.sum, and recipes for the new API. Package names used in code are not renamed.
+--use-dir names a copy of the new version that a sync tool such as Copybara already wrote into the workspace, for example third_party/gax-go/v2. go.mod gets a replace to it, impact compares against it, and nothing is downloaded.
 --open-pr commits the changed files on a new branch, pushes it, and opens a pull request with the report as its body. It never force-pushes and is off by default.
 
 Exit codes: 0 required gates passed, 5 validation failed, 6 needs review, 7 policy, 9 dirty worktree, 10 interrupted.`,
@@ -436,6 +445,7 @@ Exit codes: 0 required gates passed, 5 validation failed, 6 needs review, 7 poli
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "do not modify the original workspace")
 	cmd.Flags().BoolVar(&f.apply, "apply", false, "accepted for explicitness; upgrade already writes unless --dry-run is set")
 	cmd.Flags().StringVar(&f.toModule, "to-module", "", "new module path for a major-version move, such as <module>/v2")
+	addUseDirFlag(cmd, f)
 	addPRFlags(cmd, f)
 	return cmd
 }
@@ -873,8 +883,73 @@ This does not run Copybara. Run copybara migrate yourself after reviewing the ch
 	pin.Flags().StringVar(&workflow, "workflow", "", "workflow name")
 	pin.Flags().StringVar(&ref, "ref", "", "commit, tag, or branch to pin")
 	pin.Flags().BoolVar(&dry, "dry-run", false, "print the diff without writing")
-	cmd.Short = "Inspect copy.bara.sky and pin workflow refs without migrating"
-	cmd.AddCommand(explain, list, pin)
+
+	var io skyparse.InitOptions
+	var initOut string
+	var appendTo bool
+	var replaces []string
+	initCmd := &cobra.Command{
+		Use:   "init",
+		Short: "Write a Copybara workflow that imports one library directory",
+		Long: `Writes a core.workflow that copies one directory of an upstream repository into one directory of yours.
+
+destination_files is limited to --to, so the import never deletes anything else in the destination. With --license (the default) the upstream LICENSE file is copied next to the code.
+Without --destination-url the workflow uses folder.destination(), which writes to a local folder and needs no destination repository.
+
+Prints the config, or writes it with --out. --append adds the workflow to an existing config.`,
+		Example: "  evolvectl copybara init --workflow import_gax_go --url https://github.com/googleapis/gax-go.git --ref v2.24.1 --from v2 --to third_party/gax-go/v2\n  evolvectl copybara init --workflow import_gax_go --url https://github.com/googleapis/gax-go.git --ref v2.24.1 --from v2 --to third_party/gax-go/v2 --out copy.bara.sky --append",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			for _, r := range replaces {
+				before, after, ok := strings.Cut(r, "=")
+				if !ok || before == "" {
+					return finish(exitcode.Invalid, fmt.Errorf("--replace takes before=after, got %q", r))
+				}
+				io.Replace = append(io.Replace, [2]string{before, after})
+			}
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.CopybaraInit(f.opt(), io, initOut, appendTo)
+			return finish(code, err)
+		},
+	}
+	initCmd.Flags().StringVar(&io.Name, "workflow", "", "workflow name, such as import_gax_go")
+	initCmd.Flags().StringVar(&io.URL, "url", "", "upstream git URL")
+	initCmd.Flags().StringVar(&io.Ref, "ref", "", "tag, branch, or commit to import")
+	initCmd.Flags().StringVar(&io.From, "from", "", "directory in the upstream repository (default: the whole repository)")
+	initCmd.Flags().StringVar(&io.To, "to", "", "directory in the destination, such as third_party/gax-go/v2")
+	initCmd.Flags().StringSliceVar(&io.Exclude, "exclude", nil, "upstream globs to leave out, such as v2/**/*_test.go")
+	initCmd.Flags().StringArrayVar(&replaces, "replace", nil, "literal text replacement before=after inside --to; repeatable")
+	initCmd.Flags().StringVar(&io.DestinationURL, "destination-url", "", "git destination URL; empty uses folder.destination()")
+	initCmd.Flags().BoolVar(&io.License, "license", true, "copy the upstream LICENSE next to the code")
+	initCmd.Flags().StringVar(&initOut, "out", "", "write to this config file instead of printing")
+	initCmd.Flags().BoolVar(&appendTo, "append", false, "add the workflow to an existing --out file")
+
+	var previewRef, previewOut, against string
+	preview := &cobra.Command{
+		Use:   "preview",
+		Short: "Show which files a workflow would write, without Copybara",
+		Long: `Fetches the workflow's origin ref with git, selects origin_files, applies core.move and literal core.replace, and writes the result to .evolvectl/copybara/<workflow>/.
+
+--against <dir> compares the result with a destination checkout and lists what the import would add, modify, and delete inside destination_files.
+Transformations that are not plain moves or literal replaces are listed as not reproduced; for those, run copybara migrate --dry-run. No Java, no Copybara, nothing pushed.
+
+Exit codes: 0 every step reproduced, 6 something needs a look (a step not reproduced, a no-op step, or a file outside destination_files).`,
+		Example: "  evolvectl copybara preview --config copy.bara.sky --workflow import_gax_go\n  evolvectl copybara preview --workflow import_gax_go --ref v2.0.2 --against ../internal-otel-contrib-checkout",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			a := application()
+			a.Out = cmd.OutOrStdout()
+			code, err := a.CopybaraPreview(context.Background(), f.opt(), path, workflow, previewRef, previewOut, against)
+			return finish(code, err)
+		},
+	}
+	preview.Flags().StringVar(&path, "config", "copy.bara.sky", "path to copy.bara.sky")
+	preview.Flags().StringVar(&workflow, "workflow", "", "workflow name")
+	preview.Flags().StringVar(&previewRef, "ref", "", "try another ref without editing the config")
+	preview.Flags().StringVar(&previewOut, "out", "", "where to write the result tree (default .evolvectl/copybara/<workflow>)")
+	preview.Flags().StringVar(&against, "against", "", "destination checkout to compare with")
+
+	cmd.Short = "Write, preview, explain, and pin Copybara workflows without migrating"
+	cmd.AddCommand(explain, list, pin, initCmd, preview)
 	return cmd
 }
 

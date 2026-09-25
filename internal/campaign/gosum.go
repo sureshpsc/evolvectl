@@ -38,6 +38,26 @@ func externalReplaceBlock(root string, inv domain.Inventory) (string, bool) {
 	return strings.Join(parts, "; "), false
 }
 
+// raisedLocalRequire returns the version go.mod requires for module when that version is
+// above target and a directory replace decides the code that builds. go mod tidy raises the
+// requirement when another module in the graph needs a newer version.
+func raisedLocalRequire(path, module, target string) (string, bool) {
+	body, err := os.ReadFile(path)
+	if err != nil || !manifest.HasLocalReplace(body, module) {
+		return "", false
+	}
+	f, err := modfile.Parse(path, body, nil)
+	if err != nil {
+		return "", false
+	}
+	for _, r := range f.Require {
+		if r.Mod.Path == module && semver.Compare(r.Mod.Version, target) > 0 {
+			return r.Mod.Version, true
+		}
+	}
+	return "", false
+}
+
 // goSumDecision is the offline gate. A local replace does not need a sum entry.
 func goSumDecision(offline, localReplace bool, sum []byte, modulePath, version string) error {
 	if localReplace || !offline {
@@ -63,7 +83,7 @@ func goModFiles(rc *runCtx) []string {
 }
 
 func (e *Executor) rejectMissingSums(rc *runCtx) error {
-	if rc.report.Target.Ecosystem != "go" || rc.report.Target.VendorDir != "" {
+	if rc.report.Target.Ecosystem != "go" || rc.report.Target.VendorDir != "" || rc.report.Target.UseDir != "" {
 		return nil
 	}
 	modulePath := rc.report.Target.Module()
@@ -117,7 +137,7 @@ func (e *Executor) syncGoSums(ctx context.Context, rc *runCtx) error {
 	}
 	modulePath := t.Module()
 	version := normalizeTarget("go", t.To)
-	tidy := t.VendorDir != "" || (t.ToModule != "" && t.ToModule != t.Name)
+	tidy := t.VendorDir != "" || t.UseDir != "" || (t.ToModule != "" && t.ToModule != t.Name)
 	for _, rel := range goModFiles(rc) {
 		dir := filepath.Dir(filepath.Join(rc.workRoot, filepath.FromSlash(rel)))
 		body, err := os.ReadFile(filepath.Join(dir, "go.mod"))
