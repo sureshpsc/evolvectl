@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 // dryRunTree builds the throwaway tree a dry run edits. A detached git

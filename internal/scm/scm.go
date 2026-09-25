@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 // Runner executes git or gh in dir.

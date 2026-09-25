@@ -15,13 +15,13 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/evolvectl/evolvectl/internal/apidiff"
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/modmove"
-	"github.com/evolvectl/evolvectl/internal/patch"
-	"github.com/evolvectl/evolvectl/internal/policy"
+	"github.com/sureshpsc/evolvectl/internal/apidiff"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/modmove"
+	"github.com/sureshpsc/evolvectl/internal/patch"
+	"github.com/sureshpsc/evolvectl/internal/policy"
 )
 
 // VendorMetadata is written beside a vendored module so the copy can be traced to its source.

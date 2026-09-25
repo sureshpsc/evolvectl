@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/recipe"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/recipe"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 func TestResumeRejectsStalePlan(t *testing.T) {
@@ -78,7 +78,7 @@ func moduleRoot(t *testing.T) string {
 	}
 	for {
 		b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(b), "module github.com/evolvectl/evolvectl") {
+		if err == nil && strings.Contains(string(b), "module github.com/sureshpsc/evolvectl") {
 			return dir
 		}
 		parent := filepath.Dir(dir)

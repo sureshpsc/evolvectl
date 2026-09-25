@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/report"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/report"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 // Server is a read-only localhost dashboard.

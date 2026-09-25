@@ -4,9 +4,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/patch"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/patch"
 )
 
 func applyPython(filename string, src []byte, recipes []Recipe) ([]byte, []domain.Change, error) {

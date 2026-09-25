@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 const listCap = 500

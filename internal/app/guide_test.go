@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
 )
 
 func TestInitOpensGuide(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 func TestLoopbackAndReadOnly(t *testing.T) {

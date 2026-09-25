@@ -1,0 +1,5 @@
+# Golden testdata is compared byte for byte, so Windows checkouts must not
+# convert line endings to CRLF.
+* text=auto eol=lf
+*.png binary
+*.ico binary

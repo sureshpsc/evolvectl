@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/modmove"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/modmove"
 )
 
 // Symbol is one exported declaration. Key is "<rel package>.<Name>" or "<rel package>.<Type>.<Method>".

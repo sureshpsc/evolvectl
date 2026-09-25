@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/redact"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/redact"
 )
 
 const maxCapture = 1 << 20

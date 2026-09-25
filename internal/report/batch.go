@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/redact"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/redact"
 )
 
 // Coverage is the one-line coverage summary used in tables.

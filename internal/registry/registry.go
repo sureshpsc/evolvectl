@@ -19,9 +19,9 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/modmove"
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/modmove"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 // Client holds endpoints so tests can point them at a local server.

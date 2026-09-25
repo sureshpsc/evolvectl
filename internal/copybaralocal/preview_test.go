@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/runner"
-	"github.com/evolvectl/evolvectl/internal/skyparse"
+	"github.com/sureshpsc/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/skyparse"
 )
 
 func gitRepo(t *testing.T, files map[string]string) string {

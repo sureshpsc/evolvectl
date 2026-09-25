@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 func TestBuildLinksImportsToDependencies(t *testing.T) {

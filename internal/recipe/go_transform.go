@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/modmove"
-	"github.com/evolvectl/evolvectl/internal/patch"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/modmove"
+	"github.com/sureshpsc/evolvectl/internal/patch"
 )
 
 // ApplySource rewrites one source file with the applicable recipes.

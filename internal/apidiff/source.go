@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 // Download is the module cache entry reported by go mod download -json.

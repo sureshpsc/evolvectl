@@ -7,9 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/redact"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/redact"
 )
 
 // FileExplanation is the static view of one config.

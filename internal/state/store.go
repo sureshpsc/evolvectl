@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
 )
 
 // Store is a workspace-local run store.

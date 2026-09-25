@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/config"
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/config"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 func gitRepo(t *testing.T) (top, workspace string) {

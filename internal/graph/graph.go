@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 var pyImport = regexp.MustCompile(`(?m)^(?:from|import)\s+([A-Za-z0-9_\.]+)`)

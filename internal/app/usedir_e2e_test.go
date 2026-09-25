@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 // useDirWorkspace is a repository with lib v1 in third_party/lib and v2 already imported

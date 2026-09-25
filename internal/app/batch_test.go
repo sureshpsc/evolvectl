@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/runner"
-	"github.com/evolvectl/evolvectl/internal/scm"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/scm"
 )
 
 func batchWorkspace(t *testing.T) string {

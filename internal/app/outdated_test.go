@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/registry"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/registry"
 )
 
 func TestOutdatedOnlineReportsNextMajor(t *testing.T) {

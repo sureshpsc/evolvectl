@@ -1,4 +1,4 @@
-module github.com/evolvectl/evolvectl
+module github.com/sureshpsc/evolvectl
 
 go 1.23.0
 

@@ -12,7 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 // Recipe is a version-bounded deterministic transform.

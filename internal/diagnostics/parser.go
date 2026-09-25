@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/redact"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/redact"
 )
 
 var (

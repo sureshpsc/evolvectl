@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/commandadapt"
-	"github.com/evolvectl/evolvectl/internal/diagnostics"
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/quality"
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/commandadapt"
+	"github.com/sureshpsc/evolvectl/internal/diagnostics"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/quality"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 func (e *Executor) captureBaseline(ctx context.Context, rc *runCtx) {

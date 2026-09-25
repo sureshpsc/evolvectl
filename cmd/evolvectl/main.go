@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/evolvectl/evolvectl/internal/cli"
+	"github.com/sureshpsc/evolvectl/internal/cli"
 )
 
 func main() {

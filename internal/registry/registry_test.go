@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 func TestCheckClassifiesAndQueriesOSV(t *testing.T) {

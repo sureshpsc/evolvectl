@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/runner"
-	"github.com/evolvectl/evolvectl/internal/skyparse"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/skyparse"
 )
 
 // Marker is written into every preview directory so a later preview may replace it.

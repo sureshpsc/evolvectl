@@ -9,12 +9,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/evolvectl/evolvectl/internal/app"
-	"github.com/evolvectl/evolvectl/internal/apperr"
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/session"
-	"github.com/evolvectl/evolvectl/internal/skyparse"
-	"github.com/evolvectl/evolvectl/internal/version"
+	"github.com/sureshpsc/evolvectl/internal/app"
+	"github.com/sureshpsc/evolvectl/internal/apperr"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/session"
+	"github.com/sureshpsc/evolvectl/internal/skyparse"
+	"github.com/sureshpsc/evolvectl/internal/version"
 )
 
 type statusError struct {

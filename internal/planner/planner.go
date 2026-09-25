@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/graph"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/manifest"
-	"github.com/evolvectl/evolvectl/internal/modmove"
-	"github.com/evolvectl/evolvectl/internal/recipe"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/graph"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/manifest"
+	"github.com/sureshpsc/evolvectl/internal/modmove"
+	"github.com/sureshpsc/evolvectl/internal/recipe"
 )
 
 // Request is a plan query.

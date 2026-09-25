@@ -9,16 +9,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/batch"
-	"github.com/evolvectl/evolvectl/internal/campaign"
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/planner"
-	"github.com/evolvectl/evolvectl/internal/report"
-	"github.com/evolvectl/evolvectl/internal/scm"
-	"github.com/evolvectl/evolvectl/internal/version"
+	"github.com/sureshpsc/evolvectl/internal/batch"
+	"github.com/sureshpsc/evolvectl/internal/campaign"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/planner"
+	"github.com/sureshpsc/evolvectl/internal/report"
+	"github.com/sureshpsc/evolvectl/internal/scm"
+	"github.com/sureshpsc/evolvectl/internal/version"
 )
 
 // Batch modes.

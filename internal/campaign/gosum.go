@@ -11,12 +11,12 @@ import (
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/idgen"
-	"github.com/evolvectl/evolvectl/internal/manifest"
-	"github.com/evolvectl/evolvectl/internal/patch"
-	"github.com/evolvectl/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/idgen"
+	"github.com/sureshpsc/evolvectl/internal/manifest"
+	"github.com/sureshpsc/evolvectl/internal/patch"
+	"github.com/sureshpsc/evolvectl/internal/runner"
 )
 
 func externalReplaceBlock(root string, inv domain.Inventory) (string, bool) {

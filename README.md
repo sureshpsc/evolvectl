@@ -204,7 +204,7 @@ go install github.com/sureshpsc/evolvectl/cmd/evolvectl@latest
 evolvectl version
 ```
 
-That places `evolvectl` in `$(go env GOPATH)/bin`. From a local checkout, `go install ./cmd/evolvectl` does the same. A GitHub release is only for downloading a binary on a machine that does not have Go.
+That places `evolvectl` in `$(go env GOPATH)/bin`, which must be on `PATH`. The module path in `go.mod` is `github.com/sureshpsc/evolvectl`, the same path as the GitHub repository, which is what that command requires. The program is in `cmd/evolvectl`, so the repository root is not a valid install target. From a local checkout, `go install ./cmd/evolvectl` does the same. A GitHub release is only for downloading a binary on a machine that does not have Go.
 
 ## Quickstart
 

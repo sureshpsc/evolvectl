@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/fsio"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 func TestGoUpgradeEndToEnd(t *testing.T) {
@@ -196,7 +196,7 @@ func moduleRoot(t *testing.T) string {
 	}
 	for {
 		b, err := os.ReadFile(filepath.Join(dir, "go.mod"))
-		if err == nil && strings.Contains(string(b), "module github.com/evolvectl/evolvectl") {
+		if err == nil && strings.Contains(string(b), "module github.com/sureshpsc/evolvectl") {
 			return dir
 		}
 		parent := filepath.Dir(dir)

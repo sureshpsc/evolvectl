@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 func TestHTMLEscapesAndRedacts(t *testing.T) {

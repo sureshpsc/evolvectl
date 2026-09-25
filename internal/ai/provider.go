@@ -1,7 +1,7 @@
 // Package ai defines the optional reasoning provider. The noop provider is the default.
 package ai
 
-import "github.com/evolvectl/evolvectl/internal/redact"
+import "github.com/sureshpsc/evolvectl/internal/redact"
 
 // Proposal is a review item. Applying it is a separate policy decision.
 type Proposal struct {

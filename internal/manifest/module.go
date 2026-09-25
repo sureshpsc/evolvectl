@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/mod/modfile"
 
-	"github.com/evolvectl/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
 )
 
 // ExternalReplace is a local replace whose target sits outside the workspace.

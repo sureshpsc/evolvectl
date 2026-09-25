@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/evolvectl/evolvectl/internal/fsio"
+	"github.com/sureshpsc/evolvectl/internal/fsio"
 )
 
 // Decision is an allow/deny result.

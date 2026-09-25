@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/evolvectl/evolvectl/internal/guide"
+	"github.com/sureshpsc/evolvectl/internal/guide"
 )
 
 func TestRootHelp(t *testing.T) {

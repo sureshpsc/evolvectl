@@ -8,8 +8,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/config"
-	"github.com/evolvectl/evolvectl/internal/domain"
+	"github.com/sureshpsc/evolvectl/internal/config"
+	"github.com/sureshpsc/evolvectl/internal/domain"
 )
 
 func TestGoSuiteRunsModulesInParallelInOrder(t *testing.T) {

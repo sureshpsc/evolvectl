@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evolvectl/evolvectl/internal/campaign"
-	"github.com/evolvectl/evolvectl/internal/exitcode"
-	"github.com/evolvectl/evolvectl/internal/runner"
-	"github.com/evolvectl/evolvectl/internal/state"
+	"github.com/sureshpsc/evolvectl/internal/campaign"
+	"github.com/sureshpsc/evolvectl/internal/exitcode"
+	"github.com/sureshpsc/evolvectl/internal/runner"
+	"github.com/sureshpsc/evolvectl/internal/state"
 )
 
 // fileProxy writes a GOPROXY directory serving example.com/lib at the given versions.
